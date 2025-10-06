@@ -282,6 +282,10 @@ class CoordinatorAgent extends BaseAgent {
     const BackendAgent = require('./backend-agent');
     const TestingAgent = require('./testing-agent');
     const DatabaseAgent = require('./database-agent');
+    const FrontendAgent = require('./frontend-agent');
+    const DevOpsAgent = require('./devops-agent');
+    const DocsAgent = require('./docs-agent');
+    const ArchitectAgent = require('./architect-agent');
 
     switch (agentType) {
       case 'backend':
@@ -290,7 +294,14 @@ class CoordinatorAgent extends BaseAgent {
         return new TestingAgent(null, this.communicationHub);
       case 'database':
         return new DatabaseAgent(null, this.communicationHub);
-      // TODO: Add other agent types
+      case 'frontend':
+        return new FrontendAgent(null, this.communicationHub);
+      case 'devops':
+        return new DevOpsAgent(null, this.communicationHub);
+      case 'docs':
+        return new DocsAgent(null, this.communicationHub);
+      case 'architect':
+        return new ArchitectAgent(null, this.communicationHub);
       default:
         throw new AgentError(
           `Unknown agent type: ${agentType}`,
