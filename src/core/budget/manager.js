@@ -185,7 +185,24 @@ class BudgetManager extends EventEmitter {
     const operation = this.usage.operations.get(operationId);
 
     if (!operation) {
-      throw new BudgetError(`Unknown operation: ${operationId}`);
+      // Operation wasn't tracked (possibly validated at a different level)
+      // Record usage directly without the detailed tracking
+      this.usage.total += actualCost;
+
+      this.usage.history.push({
+        operationId,
+        actualCost,
+        estimatedCost: actualCost,
+        variance: 0,
+        timestamp: Date.now(),
+        status: 'completed-untracked'
+      });
+
+      return {
+        operationId,
+        actualCost,
+        tracked: false
+      };
     }
 
     // Update totals

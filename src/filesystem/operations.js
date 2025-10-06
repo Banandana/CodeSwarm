@@ -3,13 +3,15 @@
  * Handles safe file read/write/merge operations with AST parsing
  */
 
+const EventEmitter = require('events');
 const fs = require('fs-extra');
 const path = require('path');
 const { FileSystemError } = require('../utils/errors');
 const Validator = require('../utils/validation');
 
-class FileSystemOperations {
+class FileSystemOperations extends EventEmitter {
   constructor(outputDir) {
+    super();
     this.outputDir = outputDir;
     this.fileHistory = new Map();
   }
@@ -94,11 +96,14 @@ class FileSystemOperations {
       // Validate file path using validation utility
       const fullPath = Validator.validateFilePath(filePath, this.outputDir);
 
+      // Check if file already exists
+      const exists = await fs.pathExists(fullPath);
+
       // Ensure directory exists
       await fs.ensureDir(path.dirname(fullPath));
 
       // Store previous version in history
-      if (await fs.pathExists(fullPath)) {
+      if (exists) {
         const previousContent = await fs.readFile(fullPath, 'utf-8');
         this.fileHistory.set(filePath, {
           content: previousContent,
@@ -111,10 +116,21 @@ class FileSystemOperations {
       await fs.writeFile(tempPath, content, 'utf-8');
       await fs.rename(tempPath, fullPath);
 
+      // Emit event for tracking
+      const action = exists ? 'modified' : 'created';
+      this.emit(exists ? 'fileModified' : 'fileCreated', {
+        filePath,
+        size: content.length,
+        lines: content.split('\n').length,
+        action,
+        timestamp: Date.now()
+      });
+
       return {
         filePath,
         size: content.length,
-        lines: content.split('\n').length
+        lines: content.split('\n').length,
+        action
       };
     } catch (error) {
       throw new FileSystemError(

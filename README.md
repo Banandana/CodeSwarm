@@ -1,14 +1,14 @@
 # CodeSwarm - Autonomous Code Generation System
 
-**Status:** ✅ MVP Complete (100%) - Production Ready
+**Status:** ⚠️ Experimental - Under Development
 
-CodeSwarm is a multi-agent autonomous code generation system that transforms project proposals into production-ready code with intelligent task decomposition, budget management, and crash recovery.
+CodeSwarm is a multi-agent autonomous code generation system that transforms project proposals into code with intelligent task decomposition, budget management, and crash recovery.
 
 ---
 
 ## 🎯 Current Status
 
-### ✅ MVP Complete (100%)
+### 🔧 Implemented Components
 - **7 Specialist Agents** - Coordinator, Backend, Frontend, Testing, Database, DevOps, Documentation, Architect
 - **Budget Management System** - Priority-based allocation, cost tracking, circuit breakers
 - **State Management** - Checkpointing, eventual consistency, auto-resume
@@ -16,19 +16,18 @@ CodeSwarm is a multi-agent autonomous code generation system that transforms pro
 - **Communication Hub** - Message routing, priority queues, agent coordination
 - **Backup System** - Full directory backups with metadata
 - **File System Operations** - Safe read/write/merge with path validation
-- **Claude API Integration** - Budget-validated API calls with streaming support
+- **Claude API Integration** - Budget-validated API calls
 - **Task Decomposition** - Proposal parser + Task executor with dependency graphs
 - **Validation System** - Security scanning, syntax validation (ESLint, Pylint)
 - **Test Execution** - Test runners (Jest, Pytest) with coverage reporting
-- **CLI Interface** - Full CLI with verbose/concise modes, progress display
+- **CLI Interface** - CLI with verbose/concise modes, progress display
 - **Git Integration** - Auto-init, per-task commits with conventional format
 - **Main Application** - Integrated app.js with all components wired
 
-### 🚀 Ready For
-- Production use
-- Generating real projects
-- Testing and validation
-- Community feedback
+### ⚠️ Status
+- Experimental software under active development
+- Use with caution and test thoroughly
+- Feedback and bug reports welcome
 
 ---
 
@@ -141,10 +140,8 @@ node src/cli/index.js test --path ./my-project
 
 ## 📚 Documentation
 
-- **[STATUS_FINAL.md](./STATUS_FINAL.md)** - Complete implementation status report
-- **[IMPLEMENTATION.md](./IMPLEMENTATION.md)** - Complete technical specification and architecture
-- **[WORK_CHECKLIST.md](./WORK_CHECKLIST.md)** - Detailed task tracking
 - **[.env.example](./.env.example)** - Configuration template
+- Individual component documentation in source files
 
 ---
 
@@ -366,7 +363,7 @@ node src/cli/index.js generate \
 
 ## 🤝 Contributing
 
-Contributions are welcome! The system is now production-ready and open for community feedback and improvements.
+Contributions are welcome! This is an experimental system under active development.
 
 ### Areas for Contribution
 - Additional language support
@@ -374,25 +371,10 @@ Contributions are welcome! The system is now production-ready and open for commu
 - Bug fixes and optimizations
 - Documentation improvements
 - Example projects
+- Testing and validation
 
 ---
 
 ## 📝 License
 
 MIT
-
----
-
-## 🔗 Related Documents
-
-- [Status Report](./STATUS_FINAL.md) - Detailed implementation status
-- [Implementation Guide](./IMPLEMENTATION.md) - Comprehensive technical details
-- [Work Checklist](./WORK_CHECKLIST.md) - Development task tracking
-
----
-
-**CodeSwarm MVP is 100% complete and ready for production use!**
-
-**Total Implementation Time:** ~25-30 hours
-**Total Code Generated:** ~12,000+ lines
-**All 7 Specialist Agents:** Fully implemented with specialized prompts

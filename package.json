@@ -31,7 +31,7 @@
     "node": ">=16.0.0"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.9.1",
+    "@anthropic-ai/sdk": "^0.65.0",
     "boxen": "^7.1.1",
     "chalk": "^4.1.2",
     "cli-progress": "^3.12.0",

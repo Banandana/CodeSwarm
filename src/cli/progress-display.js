@@ -79,10 +79,10 @@ class ProgressDisplay {
 
     if (this.mode === 'verbose') {
       const icon = this._getAgentIcon(task.agentType);
-      console.log(chalk.yellow(`  ${icon} ${task.name}`));
-      console.log(chalk.gray(`     Agent: ${task.agentType} | Priority: ${task.priority}`));
+      console.log(chalk.yellow(`  ${icon} ${task.name || task.id}`));
+      console.log(chalk.gray(`     Agent: ${task.agentType} | Priority: ${task.priority || 'MEDIUM'}`));
     } else {
-      console.log(chalk.gray(`  → ${task.name}`));
+      console.log(chalk.gray(`  → ${task.name || task.id}`));
     }
   }
 

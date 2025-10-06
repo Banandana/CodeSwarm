@@ -88,7 +88,7 @@ Project Context:
 ${JSON.stringify(task.projectInfo || {}, null, 2)}
 
 Existing Files:
-${task.existingFiles?.map(f => \`- \${f.path}\`).join('\n') || 'None'}
+${task.existingFiles?.map(f => `- ${f.path}`).join('\n') || 'None'}
 
 Requirements:
 1. Create comprehensive README.md
@@ -126,7 +126,7 @@ Documentation Style: ${task.metadata?.style || 'JSDoc'}
 Coverage Target: ${task.metadata?.coverage || 'All public APIs'}
 
 Source Code:
-${task.existingFiles?.map(f => \`File: \${f.path}\n\${f.content}\`).join('\n\n') || 'Not provided'}
+${task.existingFiles?.map(f => `File: ${f.path}\n${f.content}`).join('\n\n') || 'Not provided'}
 
 Requirements:
 1. Add documentation comments to all functions/classes
@@ -164,7 +164,7 @@ Project Context:
 ${JSON.stringify(task.projectInfo || {}, null, 2)}
 
 Existing Files (for reference):
-${task.existingFiles?.map(f => \`- \${f.path}\`).join('\n') || 'None'}
+${task.existingFiles?.map(f => `- ${f.path}`).join('\n') || 'None'}
 
 Requirements:
 1. Document system architecture and design

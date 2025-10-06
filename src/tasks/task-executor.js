@@ -24,6 +24,8 @@ class TaskExecutor extends EventEmitter {
       currentTask: null,
       completedTasks: [],
       failedTasks: [],
+      filesCreated: [],
+      filesModified: [],
       paused: false
     };
   }
@@ -183,13 +185,43 @@ class TaskExecutor extends EventEmitter {
    */
   async _checkpoint(type, additionalData = {}) {
     try {
+      const coordinatorState = this.coordinator.serialize();
+
+      // Flatten orchestration data for checkpoint compatibility
       const state = {
-        ...this.coordinator.serialize(),
+        // Top-level required fields
+        currentTask: coordinatorState.orchestration?.projectPlan?.currentTask || this.execution.currentTask || null,
+        completedTasks: coordinatorState.orchestration?.completedTasks || this.execution.completedTasks || [],
+        pendingTasks: coordinatorState.orchestration?.taskQueue || [],
+        failedTasks: coordinatorState.orchestration?.failedTasks || this.execution.failedTasks || [],
+
+        // Budget tracking
+        budgetUsed: await this._getBudgetUsed(),
+        budgetRemaining: await this._getBudgetRemaining(),
+
+        // File tracking
+        filesCreated: this.execution.filesCreated || [],
+        filesModified: this.execution.filesModified || [],
+
+        // Agent tracking
+        agents: coordinatorState.orchestration?.agents || [],
+
+        // Project info
+        projectInfo: coordinatorState.orchestration?.projectPlan?.projectInfo || {},
+
+        // Config
+        config: this.config || {},
+
+        // Keep full orchestration for debugging
+        orchestration: coordinatorState.orchestration,
+
+        // Execution metadata
         execution: {
           startTime: this.execution.startTime,
-          completedTasks: this.execution.completedTasks,
-          failedTasks: this.execution.failedTasks
+          currentTask: this.execution.currentTask
         },
+
+        // Additional data
         ...additionalData
       };
 
@@ -205,6 +237,36 @@ class TaskExecutor extends EventEmitter {
         `Checkpoint failed: ${error.message}`,
         { type, error: error.message }
       ));
+    }
+  }
+
+  /**
+   * Get budget used from budget manager
+   * @private
+   */
+  async _getBudgetUsed() {
+    try {
+      if (!this.coordinator.communicationHub) return 0;
+
+      const status = this.coordinator.communicationHub.budgetManager?.getStatus();
+      return status?.totalUsed || 0;
+    } catch (error) {
+      return 0;
+    }
+  }
+
+  /**
+   * Get remaining budget from budget manager
+   * @private
+   */
+  async _getBudgetRemaining() {
+    try {
+      if (!this.coordinator.communicationHub) return 0;
+
+      const status = this.coordinator.communicationHub.budgetManager?.getStatus();
+      return status?.remaining || 0;
+    } catch (error) {
+      return 0;
     }
   }
 

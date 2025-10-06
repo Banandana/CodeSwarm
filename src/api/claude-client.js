@@ -28,7 +28,9 @@ class ClaudeClient {
       'claude-3-opus-20240229': { input: 0.000015, output: 0.000075 },
       'claude-3-sonnet-20240229': { input: 0.000003, output: 0.000015 },
       'claude-3-5-sonnet-20241022': { input: 0.000003, output: 0.000015 },
-      'claude-3-haiku-20240307': { input: 0.00000025, output: 0.00000125 }
+      'claude-3-haiku-20240307': { input: 0.00000025, output: 0.00000125 },
+      'claude-sonnet-4-5': { input: 0.000003, output: 0.000015 },
+      'claude-sonnet-4-5-20250929': { input: 0.000003, output: 0.000015 }
     };
   }
 
@@ -44,17 +46,20 @@ class ClaudeClient {
     Validator.validateMessages(messages);
     Validator.validateAgentId(agentId);
 
-    const operationId = uuidv4();
+    // Use provided operationId if available (already validated), otherwise create new one
+    const operationId = options.operationId || uuidv4();
     const estimatedCost = this._estimateCost(messages, options);
 
     try {
-      // Budget validation
-      await this.budgetManager.validateOperation(
-        operationId,
-        estimatedCost,
-        agentId,
-        options.priority || 'MEDIUM'
-      );
+      // Budget validation (skip if operationId was provided - already validated)
+      if (!options.operationId) {
+        await this.budgetManager.validateOperation(
+          operationId,
+          estimatedCost,
+          agentId,
+          options.priority || 'MEDIUM'
+        );
+      }
 
       const startTime = Date.now();
 
@@ -113,11 +118,20 @@ class ClaudeClient {
       };
 
     } catch (error) {
+      // Log error for debugging
+      console.error(`[ClaudeClient] Error in sendMessage:`, {
+        operationId,
+        agentId,
+        error: error.message,
+        status: error.status,
+        stack: error.stack?.split('\n')[0]
+      });
+
       // Clean up budget reservation on failure
       try {
         await this.budgetManager.recordUsage(operationId, 0);
       } catch (cleanupError) {
-        // Log but don't override original error
+        console.error(`[ClaudeClient] Failed to clean up budget:`, cleanupError.message);
       }
 
       // Handle specific API errors
@@ -157,17 +171,20 @@ class ClaudeClient {
    * @returns {Promise<Object>}
    */
   async streamMessage(messages, agentId, onChunk, options = {}) {
-    const operationId = uuidv4();
+    // Use provided operationId if available (already validated), otherwise create new one
+    const operationId = options.operationId || uuidv4();
     const estimatedCost = this._estimateCost(messages, options);
 
     try {
-      // Budget validation
-      await this.budgetManager.validateOperation(
-        operationId,
-        estimatedCost,
-        agentId,
-        options.priority || 'MEDIUM'
-      );
+      // Budget validation (skip if operationId was provided - already validated)
+      if (!options.operationId) {
+        await this.budgetManager.validateOperation(
+          operationId,
+          estimatedCost,
+          agentId,
+          options.priority || 'MEDIUM'
+        );
+      }
 
       const startTime = Date.now();
 

@@ -246,10 +246,16 @@ class CodeSwarm {
 
     this.components.hub.on('CLAUDE_REQUEST', async (message) => {
       try {
+        // Pass message.id as operationId to avoid double validation
+        const options = {
+          ...message.payload.options,
+          operationId: message.id
+        };
+
         const result = await this.components.claude.sendMessage(
           message.payload.messages,
           message.agentId,
-          message.payload.options
+          options
         );
         // Emit response event that the hub is waiting for
         this.components.hub.emit(`CLAUDE_RESPONSE_${message.id}`, result);
@@ -283,6 +289,15 @@ class CodeSwarm {
         checkpointInterval: 'per-task'
       }
     );
+
+    // Wire up file operations tracking to executor
+    this.components.fileOps.on('fileCreated', (event) => {
+      this.components.executor.execution.filesCreated.push(event.filePath);
+    });
+
+    this.components.fileOps.on('fileModified', (event) => {
+      this.components.executor.execution.filesModified.push(event.filePath);
+    });
 
     // Security scanner
     this.components.scanner = new SecurityScanner(outputDir);

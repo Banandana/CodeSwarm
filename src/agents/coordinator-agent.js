@@ -419,11 +419,36 @@ class CoordinatorAgent extends BaseAgent {
    * @private
    */
   async _waitForTaskCompletion() {
-    return new Promise(resolve => {
+    const timeout = 300000; // 5 minutes
+    const startTime = Date.now();
+
+    return new Promise((resolve, reject) => {
       const checkInterval = setInterval(() => {
         if (this.orchestration.activeTasks.size === 0) {
           clearInterval(checkInterval);
           resolve();
+        }
+
+        // Timeout check
+        if (Date.now() - startTime > timeout) {
+          clearInterval(checkInterval);
+
+          const staleTasks = Array.from(this.orchestration.activeTasks.values())
+            .map(t => ({
+              taskId: t.task.id,
+              agentType: t.task.agentType,
+              runtime: Date.now() - t.startTime
+            }));
+
+          this.emit('taskTimeout', { staleTasks });
+
+          reject(new AgentError(
+            `Task completion timeout after ${timeout}ms. Stale tasks: ${JSON.stringify(staleTasks)}`,
+            {
+              agentId: this.agentId,
+              staleTasks
+            }
+          ));
         }
       }, 1000);
     });
