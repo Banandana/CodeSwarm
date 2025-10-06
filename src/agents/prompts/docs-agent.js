@@ -51,7 +51,7 @@ Project Context:
 - API Version: ${task.projectInfo?.apiVersion || '1.0.0'}
 
 Source Files:
-${task.existingFiles?.map(f => \`\${f.path}\n\${f.content.substring(0, 500)}...\`).join('\n\n') || 'Not provided'}
+${task.existingFiles?.map(f => `${f.path}\n${f.content.substring(0, 500)}...`).join('\n\n') || 'Not provided'}
 
 Requirements:
 1. Document all endpoints with HTTP methods

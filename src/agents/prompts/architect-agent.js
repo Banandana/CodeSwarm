@@ -193,7 +193,7 @@ Current Issues: ${task.metadata?.issues || 'Not specified'}
 Goals: ${JSON.stringify(task.metadata?.goals || [], null, 2)}
 
 Current Architecture:
-${task.existingFiles?.map(f => \`\${f.path}\n\${f.content.substring(0, 500)}...\`).join('\n\n') || 'Not provided'}
+${task.existingFiles?.map(f => `${f.path}\n${f.content.substring(0, 500)}...`).join('\n\n') || 'Not provided'}
 
 Requirements:
 1. Analyze current architecture

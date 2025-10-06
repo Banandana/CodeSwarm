@@ -216,33 +216,47 @@ class CodeSwarm {
 
     // Communication hub
     this.components.hub = new CommunicationHub(
-      this.components.budget,
       this.components.state,
-      this.components.locks
+      this.components.locks,
+      this.components.budget
     );
 
     // Attach file operations handler to hub
-    this.components.hub.on('READ', async (message) => {
-      const content = await this.components.fileOps.readFile(message.payload.filePath);
-      return { content };
+    this.components.hub.on('FILE_READ', async (message) => {
+      try {
+        const content = await this.components.fileOps.readFile(message.payload.filePath);
+        this.components.hub.emit(`FILE_READ_RESPONSE_${message.id}`, { content });
+      } catch (error) {
+        this.components.hub.emit(`FILE_READ_ERROR_${message.id}`, error);
+      }
     });
 
-    this.components.hub.on('WRITE', async (message) => {
-      const result = await this.components.fileOps.writeFile(
-        message.payload.filePath,
-        message.payload.content,
-        message.payload.options
-      );
-      return result;
+    this.components.hub.on('FILE_WRITE', async (message) => {
+      try {
+        const result = await this.components.fileOps.writeFile(
+          message.payload.filePath,
+          message.payload.content,
+          message.payload.options
+        );
+        this.components.hub.emit(`FILE_WRITE_RESPONSE_${message.id}`, result);
+      } catch (error) {
+        this.components.hub.emit(`FILE_WRITE_ERROR_${message.id}`, error);
+      }
     });
 
     this.components.hub.on('CLAUDE_REQUEST', async (message) => {
-      const result = await this.components.claude.sendMessage(
-        message.payload.messages,
-        message.agentId,
-        message.payload.options
-      );
-      return result;
+      try {
+        const result = await this.components.claude.sendMessage(
+          message.payload.messages,
+          message.agentId,
+          message.payload.options
+        );
+        // Emit response event that the hub is waiting for
+        this.components.hub.emit(`CLAUDE_RESPONSE_${message.id}`, result);
+      } catch (error) {
+        // Emit error event that the hub is waiting for
+        this.components.hub.emit(`CLAUDE_ERROR_${message.id}`, error);
+      }
     });
 
     // Checkpoint manager

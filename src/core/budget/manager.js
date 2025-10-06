@@ -27,14 +27,37 @@ class BudgetManager extends EventEmitter {
       history: []
     };
 
-    this.circuitBreaker = new CircuitBreaker({
-      failureThreshold: 5,
-      resetTimeout: 30000
-    });
+    // Validate dependencies
+    try {
+      this.circuitBreaker = new CircuitBreaker({
+        failureThreshold: 5,
+        resetTimeout: 30000
+      });
 
-    this.costEstimator = new CostEstimator({
-      model: this.config.model
-    });
+      if (!this.circuitBreaker) {
+        throw new Error('CircuitBreaker did not initialize properly');
+      }
+    } catch (error) {
+      throw new BudgetError(
+        `Failed to initialize CircuitBreaker: ${error.message}`,
+        { originalError: error.message }
+      );
+    }
+
+    try {
+      this.costEstimator = new CostEstimator({
+        model: this.config.model
+      });
+
+      if (!this.costEstimator) {
+        throw new Error('CostEstimator did not initialize properly');
+      }
+    } catch (error) {
+      throw new BudgetError(
+        `Failed to initialize CostEstimator: ${error.message}`,
+        { originalError: error.message }
+      );
+    }
 
     // Priority queue for budget allocation
     this.priorityQueue = {

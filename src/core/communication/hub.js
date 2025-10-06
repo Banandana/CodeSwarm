@@ -284,6 +284,243 @@ class CommunicationHub extends EventEmitter {
   }
 
   /**
+   * Handle CLAUDE_REQUEST operations
+   * @private
+   */
+  async _handleClaudeRequest(message) {
+    // The actual Claude client is in app.js, so we emit an event
+    // and the app.js handler will respond
+    return new Promise((resolve, reject) => {
+      const responseEvent = `CLAUDE_RESPONSE_${message.id}`;
+      const errorEvent = `CLAUDE_ERROR_${message.id}`;
+
+      const cleanup = () => {
+        this.removeAllListeners(responseEvent);
+        this.removeAllListeners(errorEvent);
+      };
+
+      this.once(responseEvent, (result) => {
+        cleanup();
+        resolve(result);
+      });
+
+      this.once(errorEvent, (error) => {
+        cleanup();
+        reject(error);
+      });
+
+      // Emit the request event
+      this.emit('CLAUDE_REQUEST', message);
+
+      // Timeout after 2 minutes
+      setTimeout(() => {
+        cleanup();
+        reject(new Error('Claude request timed out'));
+      }, 120000);
+    });
+  }
+
+  /**
+   * Handle BUDGET_CHECK operations
+   * @private
+   */
+  async _handleBudgetCheck(message) {
+    const { estimatedCost, priority } = message.payload;
+
+    const validation = await this.budgetManager.validateOperation(
+      message.id,
+      estimatedCost,
+      message.agentId,
+      priority || 'MEDIUM'
+    );
+
+    return {
+      success: true,
+      approved: validation.approved,
+      remaining: validation.remaining,
+      utilizationPercent: validation.utilizationPercent
+    };
+  }
+
+  /**
+   * Handle BUDGET_STATUS operations
+   * @private
+   */
+  async _handleBudgetStatus(message) {
+    const status = await this.budgetManager.getStatus();
+
+    return {
+      success: true,
+      ...status
+    };
+  }
+
+  /**
+   * Handle FILE_READ operations
+   * @private
+   */
+  async _handleFileRead(message) {
+    return new Promise((resolve, reject) => {
+      const responseEvent = `FILE_READ_RESPONSE_${message.id}`;
+      const errorEvent = `FILE_READ_ERROR_${message.id}`;
+
+      const cleanup = () => {
+        this.removeAllListeners(responseEvent);
+        this.removeAllListeners(errorEvent);
+      };
+
+      this.once(responseEvent, (result) => {
+        cleanup();
+        resolve(result);
+      });
+
+      this.once(errorEvent, (error) => {
+        cleanup();
+        reject(error);
+      });
+
+      // Emit the request event
+      this.emit('FILE_READ', message);
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        cleanup();
+        reject(new Error('File read timeout'));
+      }, 30000);
+    });
+  }
+
+  /**
+   * Handle FILE_WRITE operations
+   * @private
+   */
+  async _handleFileWrite(message) {
+    return new Promise((resolve, reject) => {
+      const responseEvent = `FILE_WRITE_RESPONSE_${message.id}`;
+      const errorEvent = `FILE_WRITE_ERROR_${message.id}`;
+
+      const cleanup = () => {
+        this.removeAllListeners(responseEvent);
+        this.removeAllListeners(errorEvent);
+      };
+
+      this.once(responseEvent, (result) => {
+        cleanup();
+        resolve(result);
+      });
+
+      this.once(errorEvent, (error) => {
+        cleanup();
+        reject(error);
+      });
+
+      // Emit the request event
+      this.emit('FILE_WRITE', message);
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        cleanup();
+        reject(new Error('File write timeout'));
+      }, 30000);
+    });
+  }
+
+  /**
+   * Handle TASK_FAILED operations
+   * @private
+   */
+  async _handleTaskFailed(message) {
+    const { taskId, error, stackTrace } = message.payload;
+
+    this.emit('taskFailed', {
+      taskId,
+      agentId: message.agentId,
+      error,
+      stackTrace
+    });
+
+    return { success: true, taskId };
+  }
+
+  /**
+   * Handle UNSUBSCRIBE operations
+   * @private
+   */
+  async _handleUnsubscribe(message) {
+    const { subscriptionId } = message.payload;
+
+    try {
+      await this.stateManager.unsubscribe(subscriptionId);
+
+      // Remove from subscriptions map
+      this.subscriptions.delete(subscriptionId);
+
+      return { success: true, subscriptionId };
+    } catch (error) {
+      throw new CommunicationError(
+        `Unsubscribe failed: ${error.message}`
+      );
+    }
+  }
+
+  /**
+   * Handle HEARTBEAT operations
+   * @private
+   */
+  async _handleHeartbeat(message) {
+    const { status, currentTask } = message.payload;
+
+    this.emit('agentHeartbeat', {
+      agentId: message.agentId,
+      status,
+      currentTask,
+      timestamp: message.timestamp
+    });
+
+    return { success: true, received: true };
+  }
+
+  /**
+   * Handle STATUS_REQUEST operations
+   * @private
+   */
+  async _handleStatusRequest(message) {
+    const status = this.getStatus();
+
+    return {
+      success: true,
+      status
+    };
+  }
+
+  /**
+   * Handle STATUS_RESPONSE operations
+   * @private
+   */
+  async _handleStatusResponse(message) {
+    // Status responses are informational, just emit event
+    this.emit('statusReceived', {
+      agentId: message.agentId,
+      status: message.payload
+    });
+
+    return { success: true };
+  }
+
+  /**
+   * Handle SHUTDOWN operations
+   * @private
+   */
+  async _handleShutdown(message) {
+    this.emit('shutdownRequested', {
+      agentId: message.agentId,
+      reason: message.payload.reason
+    });
+
+    return { success: true, acknowledged: true };
+  }
+
+  /**
    * Process message queue
    * @private
    */
@@ -380,6 +617,50 @@ class CommunicationHub extends EventEmitter {
 
         case MessageProtocol.MESSAGE_TYPES.HANDOFF:
           result = await this._handleHandoff(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.CLAUDE_REQUEST:
+          result = await this._handleClaudeRequest(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.BUDGET_CHECK:
+          result = await this._handleBudgetCheck(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.BUDGET_STATUS:
+          result = await this._handleBudgetStatus(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.FILE_READ:
+          result = await this._handleFileRead(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.FILE_WRITE:
+          result = await this._handleFileWrite(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.TASK_FAILED:
+          result = await this._handleTaskFailed(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.UNSUBSCRIBE:
+          result = await this._handleUnsubscribe(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.HEARTBEAT:
+          result = await this._handleHeartbeat(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.STATUS_REQUEST:
+          result = await this._handleStatusRequest(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.STATUS_RESPONSE:
+          result = await this._handleStatusResponse(message);
+          break;
+
+        case MessageProtocol.MESSAGE_TYPES.SHUTDOWN:
+          result = await this._handleShutdown(message);
           break;
 
         default:

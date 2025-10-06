@@ -6,6 +6,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { v4: uuidv4 } = require('uuid');
 const { APIError } = require('../utils/errors');
+const Validator = require('../utils/validation');
 
 class ClaudeClient {
   constructor(budgetManager, config = {}) {
@@ -26,6 +27,7 @@ class ClaudeClient {
     this.costs = {
       'claude-3-opus-20240229': { input: 0.000015, output: 0.000075 },
       'claude-3-sonnet-20240229': { input: 0.000003, output: 0.000015 },
+      'claude-3-5-sonnet-20241022': { input: 0.000003, output: 0.000015 },
       'claude-3-haiku-20240307': { input: 0.00000025, output: 0.00000125 }
     };
   }
@@ -38,6 +40,10 @@ class ClaudeClient {
    * @returns {Promise<Object>}
    */
   async sendMessage(messages, agentId, options = {}) {
+    // Validate inputs
+    Validator.validateMessages(messages);
+    Validator.validateAgentId(agentId);
+
     const operationId = uuidv4();
     const estimatedCost = this._estimateCost(messages, options);
 

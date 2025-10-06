@@ -7,11 +7,15 @@ const { v4: uuidv4 } = require('uuid');
 
 class MessageProtocol {
   static MESSAGE_TYPES = {
-    // Core operations
+    // State operations
     READ: 'READ',
     WRITE: 'WRITE',
     SUBSCRIBE: 'SUBSCRIBE',
     UNSUBSCRIBE: 'UNSUBSCRIBE',
+
+    // File operations
+    FILE_READ: 'FILE_READ',
+    FILE_WRITE: 'FILE_WRITE',
 
     // Locking operations
     LOCK: 'LOCK',
@@ -22,6 +26,11 @@ class MessageProtocol {
     TASK_COMPLETE: 'TASK_COMPLETE',
     TASK_FAILED: 'TASK_FAILED',
     HANDOFF: 'HANDOFF',
+
+    // API operations
+    CLAUDE_REQUEST: 'CLAUDE_REQUEST',
+    BUDGET_CHECK: 'BUDGET_CHECK',
+    BUDGET_STATUS: 'BUDGET_STATUS',
 
     // System messages
     HEARTBEAT: 'HEARTBEAT',
@@ -100,8 +109,10 @@ class MessageProtocol {
   static requiresBudget(type) {
     const budgetRequired = [
       'TASK_ASSIGN',
-      'WRITE', // If writing generated code
-      'HANDOFF'
+      'WRITE', // If writing state
+      'FILE_WRITE', // If writing generated code
+      'HANDOFF',
+      'CLAUDE_REQUEST' // Claude API calls cost money
     ];
 
     return budgetRequired.includes(type);

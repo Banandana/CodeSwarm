@@ -6,6 +6,7 @@
 const fs = require('fs-extra');
 const path = require('path');
 const { FileSystemError } = require('../utils/errors');
+const Validator = require('../utils/validation');
 
 class FileSystemOperations {
   constructor(outputDir) {
@@ -65,18 +66,8 @@ class FileSystemOperations {
    */
   async readFile(filePath) {
     try {
-      const fullPath = path.join(this.outputDir, filePath);
-
-      // Security check: ensure path is within output directory
-      const resolvedPath = path.resolve(fullPath);
-      const resolvedOutputDir = path.resolve(this.outputDir);
-
-      if (!resolvedPath.startsWith(resolvedOutputDir)) {
-        throw new FileSystemError(
-          `Access denied: Path outside output directory`,
-          { filePath, outputDir: this.outputDir }
-        );
-      }
+      // Validate file path using validation utility
+      const fullPath = Validator.validateFilePath(filePath, this.outputDir);
 
       if (!await fs.pathExists(fullPath)) {
         return null;
@@ -100,18 +91,8 @@ class FileSystemOperations {
    */
   async writeFile(filePath, content, options = {}) {
     try {
-      const fullPath = path.join(this.outputDir, filePath);
-
-      // Security check
-      const resolvedPath = path.resolve(fullPath);
-      const resolvedOutputDir = path.resolve(this.outputDir);
-
-      if (!resolvedPath.startsWith(resolvedOutputDir)) {
-        throw new FileSystemError(
-          `Access denied: Path outside output directory`,
-          { filePath, outputDir: this.outputDir }
-        );
-      }
+      // Validate file path using validation utility
+      const fullPath = Validator.validateFilePath(filePath, this.outputDir);
 
       // Ensure directory exists
       await fs.ensureDir(path.dirname(fullPath));

@@ -6,6 +6,7 @@
 const EventEmitter = require('events');
 const { v4: uuidv4 } = require('uuid');
 const { AgentError } = require('../utils/errors');
+const MessageProtocol = require('../core/communication/protocol');
 
 class BaseAgent extends EventEmitter {
   constructor(agentId, agentType, communicationHub, options = {}) {
@@ -171,17 +172,43 @@ class BaseAgent extends EventEmitter {
   }
 
   /**
+   * Convert priority string to number
+   * @private
+   */
+  _convertPriority(priority) {
+    const priorityMap = {
+      'CRITICAL': 0,
+      'HIGH': 1,
+      'MEDIUM': 2,
+      'NORMAL': 2,
+      'LOW': 3
+    };
+
+    if (typeof priority === 'number') return priority;
+    return priorityMap[priority] || 2;
+  }
+
+  /**
    * Send message via communication hub
    * @param {Object} message - Message object
    * @returns {Promise<Object>}
    */
   async sendMessage(message) {
-    const fullMessage = {
-      id: uuidv4(),
-      agentId: this.agentId,
-      timestamp: Date.now(),
-      ...message
-    };
+    // Use protocol helper to create standardized message
+    const fullMessage = MessageProtocol.createMessage(
+      message.type,
+      this.agentId,
+      message.payload,
+      this._convertPriority(message.priority || 'NORMAL')
+    );
+
+    // Add any additional fields that aren't in the standard protocol
+    if (message.estimatedCost) {
+      fullMessage.estimatedCost = message.estimatedCost;
+    }
+    if (message.actualCost) {
+      fullMessage.actualCost = message.actualCost;
+    }
 
     return await this.communicationHub.routeMessage(fullMessage);
   }
@@ -193,7 +220,7 @@ class BaseAgent extends EventEmitter {
    */
   async readFile(filePath) {
     const response = await this.sendMessage({
-      type: 'READ',
+      type: 'FILE_READ',
       payload: { filePath },
       priority: 'NORMAL'
     });
@@ -210,7 +237,7 @@ class BaseAgent extends EventEmitter {
    */
   async writeFile(filePath, content, options = {}) {
     const response = await this.sendMessage({
-      type: 'WRITE',
+      type: 'FILE_WRITE',
       payload: { filePath, content, options },
       priority: 'NORMAL'
     });
@@ -226,7 +253,7 @@ class BaseAgent extends EventEmitter {
   async acquireLock(filePath) {
     const response = await this.sendMessage({
       type: 'LOCK',
-      payload: { filePath },
+      payload: { resource: filePath },
       priority: 'HIGH'
     });
 

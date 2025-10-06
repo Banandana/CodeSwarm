@@ -279,34 +279,47 @@ class CoordinatorAgent extends BaseAgent {
    * @private
    */
   async _createAgent(agentType) {
-    const BackendAgent = require('./backend-agent');
-    const TestingAgent = require('./testing-agent');
-    const DatabaseAgent = require('./database-agent');
-    const FrontendAgent = require('./frontend-agent');
-    const DevOpsAgent = require('./devops-agent');
-    const DocsAgent = require('./docs-agent');
-    const ArchitectAgent = require('./architect-agent');
+    try {
+      let AgentClass;
 
-    switch (agentType) {
-      case 'backend':
-        return new BackendAgent(null, this.communicationHub);
-      case 'testing':
-        return new TestingAgent(null, this.communicationHub);
-      case 'database':
-        return new DatabaseAgent(null, this.communicationHub);
-      case 'frontend':
-        return new FrontendAgent(null, this.communicationHub);
-      case 'devops':
-        return new DevOpsAgent(null, this.communicationHub);
-      case 'docs':
-        return new DocsAgent(null, this.communicationHub);
-      case 'architect':
-        return new ArchitectAgent(null, this.communicationHub);
-      default:
-        throw new AgentError(
-          `Unknown agent type: ${agentType}`,
-          { agentId: this.agentId }
-        );
+      switch (agentType) {
+        case 'backend':
+          AgentClass = require('./backend-agent');
+          return new AgentClass(null, this.communicationHub);
+        case 'testing':
+          AgentClass = require('./testing-agent');
+          return new AgentClass(null, this.communicationHub);
+        case 'database':
+          AgentClass = require('./database-agent');
+          return new AgentClass(null, this.communicationHub);
+        case 'frontend':
+          AgentClass = require('./frontend-agent');
+          return new AgentClass(null, this.communicationHub);
+        case 'devops':
+          AgentClass = require('./devops-agent');
+          return new AgentClass(null, this.communicationHub);
+        case 'docs':
+          AgentClass = require('./docs-agent');
+          return new AgentClass(null, this.communicationHub);
+        case 'architect':
+          AgentClass = require('./architect-agent');
+          return new AgentClass(null, this.communicationHub);
+        default:
+          throw new AgentError(
+            `Unknown agent type: ${agentType}`,
+            { agentId: this.agentId }
+          );
+      }
+    } catch (error) {
+      throw new AgentError(
+        `Failed to create ${agentType} agent: ${error.message}`,
+        {
+          agentId: this.agentId,
+          agentType,
+          originalError: error.message,
+          stack: error.stack
+        }
+      );
     }
   }
 
