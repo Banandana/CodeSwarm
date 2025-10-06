@@ -1,0 +1,56 @@
+{
+  "name": "codeswarm",
+  "version": "1.0.0",
+  "description": "Autonomous code generation system with multi-agent coordination",
+  "main": "src/index.js",
+  "bin": {
+    "codeswarm": "./src/cli/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "NODE_ENV=development nodemon src/index.js",
+    "test": "jest --coverage",
+    "test:watch": "jest --watch",
+    "test:unit": "jest tests/unit",
+    "test:integration": "jest tests/integration",
+    "lint": "eslint src/ --fix",
+    "setup": "node src/cli/commands/setup.js",
+    "build": "npm ci && npm test && npm run lint"
+  },
+  "keywords": [
+    "ai",
+    "code-generation",
+    "multi-agent",
+    "autonomous",
+    "claude",
+    "swarm"
+  ],
+  "author": "CodeSwarm Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.9.1",
+    "commander": "^11.0.0",
+    "inquirer": "^9.2.0",
+    "winston": "^3.11.0",
+    "cli-progress": "^3.12.0",
+    "simple-git": "^3.20.0",
+    "eslint": "^8.50.0",
+    "jest": "^29.7.0",
+    "fs-extra": "^11.1.1",
+    "yaml": "^2.3.2",
+    "chalk": "^5.3.0",
+    "ora": "^7.0.1",
+    "boxen": "^7.1.1",
+    "uuid": "^9.0.1",
+    "dotenv": "^16.3.1",
+    "glob": "^10.3.10"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1",
+    "@types/jest": "^29.5.5",
+    "supertest": "^6.3.3"
+  }
+}
