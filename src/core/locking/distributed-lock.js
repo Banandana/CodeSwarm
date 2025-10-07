@@ -42,9 +42,31 @@ class DistributedLockManager extends EventEmitter {
     const lockTimeout = timeout || this.options.defaultTimeout;
     const expiresAt = Date.now() + lockTimeout;
 
+    console.log(`[DistributedLockManager] Lock acquisition requested:`, {
+      lockId,
+      resourceId,
+      agentId,
+      timeout: lockTimeout,
+      expiresAt: new Date(expiresAt).toISOString(),
+      currentLockHolder: this.locks.get(resourceId)?.agentId,
+      queueLength: this.lockQueue.get(resourceId)?.length || 0
+    });
+
     // Check for deadlock before waiting
-    if (this.deadlockDetector.wouldCauseDeadlock(agentId, resourceId)) {
+    const wouldDeadlock = this.deadlockDetector.wouldCauseDeadlock(agentId, resourceId);
+    console.debug(`[DistributedLockManager] Deadlock check:`, {
+      resourceId,
+      agentId,
+      wouldDeadlock
+    });
+
+    if (wouldDeadlock) {
       const status = this.deadlockDetector.getStatus();
+      console.error(`[DistributedLockManager] Deadlock detected:`, {
+        resourceId,
+        agentId,
+        potentialCycles: status.potentialDeadlocks
+      });
       throw new DeadlockError(
         `Acquiring lock on ${resourceId} would cause deadlock`,
         {
@@ -57,18 +79,43 @@ class DistributedLockManager extends EventEmitter {
 
     return new Promise((resolve, reject) => {
       const attemptAcquire = () => {
+        const now = Date.now();
+
         // Check if lock is available
         const currentLock = this.locks.get(resourceId);
+        const isAvailable = !currentLock || this._isExpired(currentLock);
 
-        if (!currentLock || this._isExpired(currentLock)) {
+        console.debug(`[DistributedLockManager] Lock availability check:`, {
+          lockId,
+          resourceId,
+          agentId,
+          hasCurrentLock: !!currentLock,
+          currentLockExpired: currentLock ? this._isExpired(currentLock) : null,
+          isAvailable
+        });
+
+        if (isAvailable) {
           // Lock is available
+          console.log(`[DistributedLockManager] Lock available, granting immediately:`, {
+            lockId,
+            resourceId,
+            agentId
+          });
           this._grantLock(resourceId, agentId, lockId, expiresAt);
           resolve(lockId);
           return;
         }
 
         // Lock is held, check if we've timed out
-        if (Date.now() >= expiresAt) {
+        if (now >= expiresAt) {
+          console.warn(`[DistributedLockManager] Lock request timed out:`, {
+            lockId,
+            resourceId,
+            agentId,
+            timeout: lockTimeout,
+            currentLockHolder: currentLock?.agentId
+          });
+
           // FIX B6: Mark as cancelled before removing from queue
           this._markAsCancelled(resourceId, lockId);
           this._removeFromQueue(resourceId, lockId);
@@ -86,13 +133,24 @@ class DistributedLockManager extends EventEmitter {
           this.lockQueue.set(resourceId, []);
         }
 
-        this.lockQueue.get(resourceId).push({
+        const queue = this.lockQueue.get(resourceId);
+        queue.push({
           lockId,
           agentId,
           expiresAt,
           resolve,
           reject,
           cancelled: false  // FIX B6: Track cancellation state
+        });
+
+        console.log(`[DistributedLockManager] Added to wait queue:`, {
+          lockId,
+          resourceId,
+          agentId,
+          queuePosition: queue.length,
+          queueLength: queue.length,
+          currentLockHolder: currentLock?.agentId,
+          timeRemaining: expiresAt - now
         });
 
         // Record wait edge for deadlock detection
@@ -109,6 +167,10 @@ class DistributedLockManager extends EventEmitter {
    * @returns {boolean}
    */
   async releaseLock(lockId) {
+    console.log(`[DistributedLockManager] Lock release requested:`, {
+      lockId
+    });
+
     // Find resource for this lock
     let resourceId = null;
     for (const [rid, lock] of this.locks.entries()) {
@@ -119,20 +181,38 @@ class DistributedLockManager extends EventEmitter {
     }
 
     if (!resourceId) {
+      console.error(`[DistributedLockManager] Cannot release unknown lock:`, {
+        lockId,
+        activeLocks: this.locks.size
+      });
       throw new LockError(`Unknown lock ID: ${lockId}`);
     }
 
     const lock = this.locks.get(resourceId);
+    const heldDuration = Date.now() - lock.acquiredAt;
+
+    console.log(`[DistributedLockManager] Releasing lock:`, {
+      lockId,
+      resourceId,
+      agentId: lock.agentId,
+      heldDuration,
+      queueLength: this.lockQueue.get(resourceId)?.length || 0
+    });
 
     // Remove lock
     this.locks.delete(resourceId);
     this.deadlockDetector.releaseResource(resourceId);
 
+    console.debug(`[DistributedLockManager] Lock removed from registry:`, {
+      resourceId,
+      remainingLocks: this.locks.size
+    });
+
     this.emit('lockReleased', {
       lockId,
       resourceId,
       agentId: lock.agentId,
-      heldDuration: Date.now() - lock.acquiredAt
+      heldDuration
     });
 
     // Process queue for this resource
@@ -191,15 +271,31 @@ class DistributedLockManager extends EventEmitter {
    * @private
    */
   _grantLock(resourceId, agentId, lockId, expiresAt) {
+    const acquiredAt = Date.now();
+
+    console.log(`[DistributedLockManager] Granting lock:`, {
+      lockId,
+      resourceId,
+      agentId,
+      acquiredAt: new Date(acquiredAt).toISOString(),
+      expiresAt: new Date(expiresAt).toISOString(),
+      duration: expiresAt - acquiredAt
+    });
+
     this.locks.set(resourceId, {
       resourceId,
       lockId,
       agentId,
-      acquiredAt: Date.now(),
+      acquiredAt,
       expiresAt
     });
 
     this.deadlockDetector.acquireResource(agentId, resourceId);
+
+    console.debug(`[DistributedLockManager] Lock registered:`, {
+      resourceId,
+      totalActiveLocks: this.locks.size
+    });
 
     this.emit('lockAcquired', {
       lockId,
@@ -217,22 +313,54 @@ class DistributedLockManager extends EventEmitter {
   async _processQueue(resourceId) {
     const queue = this.lockQueue.get(resourceId);
 
+    console.debug(`[DistributedLockManager] Processing queue:`, {
+      resourceId,
+      queueExists: !!queue,
+      queueLength: queue?.length || 0
+    });
+
     if (!queue || queue.length === 0) {
+      console.debug(`[DistributedLockManager] Queue empty, nothing to process:`, {
+        resourceId
+      });
       return;
     }
 
     // Get next waiter
     const waiter = queue.shift();
+    const now = Date.now();
+
+    console.log(`[DistributedLockManager] Processing next waiter:`, {
+      resourceId,
+      lockId: waiter.lockId,
+      agentId: waiter.agentId,
+      cancelled: waiter.cancelled,
+      expired: now >= waiter.expiresAt,
+      timeRemaining: waiter.expiresAt - now,
+      remainingInQueue: queue.length
+    });
 
     // FIX B6: Check if request was cancelled (important to check before expiration)
     if (waiter.cancelled) {
+      console.warn(`[DistributedLockManager] Skipping cancelled waiter:`, {
+        resourceId,
+        lockId: waiter.lockId,
+        agentId: waiter.agentId
+      });
       // Skip cancelled requests and try next waiter
       await this._processQueue(resourceId);
       return;
     }
 
     // Check if request has expired
-    if (Date.now() >= waiter.expiresAt) {
+    if (now >= waiter.expiresAt) {
+      console.warn(`[DistributedLockManager] Waiter expired while in queue:`, {
+        resourceId,
+        lockId: waiter.lockId,
+        agentId: waiter.agentId,
+        expiresAt: new Date(waiter.expiresAt).toISOString()
+      });
+
       waiter.reject(new TimeoutError(
         `Lock request expired while waiting`,
         { resourceId, lockId: waiter.lockId }
@@ -244,11 +372,18 @@ class DistributedLockManager extends EventEmitter {
     }
 
     // Grant lock to next waiter
+    console.log(`[DistributedLockManager] Granting lock to next waiter:`, {
+      resourceId,
+      lockId: waiter.lockId,
+      agentId: waiter.agentId
+    });
+
     this._grantLock(resourceId, waiter.agentId, waiter.lockId, waiter.expiresAt);
     waiter.resolve(waiter.lockId);
 
     // Clean up empty queue
     if (queue.length === 0) {
+      console.debug(`[DistributedLockManager] Queue now empty:`, { resourceId });
       this.lockQueue.delete(resourceId);
     }
   }
@@ -262,12 +397,28 @@ class DistributedLockManager extends EventEmitter {
     const queue = this.lockQueue.get(resourceId);
 
     if (!queue) {
+      console.debug(`[DistributedLockManager] No queue to mark cancellation:`, {
+        resourceId,
+        lockId
+      });
       return;
     }
 
     const waiter = queue.find(w => w.lockId === lockId);
     if (waiter) {
       waiter.cancelled = true;
+      console.log(`[DistributedLockManager] Marked lock request as cancelled:`, {
+        resourceId,
+        lockId,
+        agentId: waiter.agentId,
+        queuePosition: queue.indexOf(waiter) + 1,
+        queueLength: queue.length
+      });
+    } else {
+      console.debug(`[DistributedLockManager] Lock request not found in queue:`, {
+        resourceId,
+        lockId
+      });
     }
   }
 
@@ -279,15 +430,32 @@ class DistributedLockManager extends EventEmitter {
     const queue = this.lockQueue.get(resourceId);
 
     if (!queue) {
+      console.debug(`[DistributedLockManager] No queue to remove from:`, {
+        resourceId,
+        lockId
+      });
       return;
     }
 
     const index = queue.findIndex(w => w.lockId === lockId);
     if (index !== -1) {
-      queue.splice(index, 1);
+      const removed = queue.splice(index, 1)[0];
+      console.log(`[DistributedLockManager] Removed request from queue:`, {
+        resourceId,
+        lockId,
+        agentId: removed.agentId,
+        wasAtPosition: index + 1,
+        remainingInQueue: queue.length
+      });
+    } else {
+      console.debug(`[DistributedLockManager] Lock request not found to remove:`, {
+        resourceId,
+        lockId
+      });
     }
 
     if (queue.length === 0) {
+      console.debug(`[DistributedLockManager] Queue empty after removal:`, { resourceId });
       this.lockQueue.delete(resourceId);
     }
   }
@@ -308,14 +476,40 @@ class DistributedLockManager extends EventEmitter {
     const now = Date.now();
     const expired = [];
 
+    console.debug(`[DistributedLockManager] Cleanup cycle starting:`, {
+      timestamp: new Date(now).toISOString(),
+      activeLocks: this.locks.size,
+      totalQueued: Array.from(this.lockQueue.values()).reduce((sum, q) => sum + q.length, 0)
+    });
+
     for (const [resourceId, lock] of this.locks.entries()) {
-      if (now >= lock.expiresAt) {
+      const isExpired = now >= lock.expiresAt;
+      const age = now - lock.acquiredAt;
+
+      console.debug(`[DistributedLockManager] Checking lock:`, {
+        resourceId,
+        lockId: lock.lockId,
+        agentId: lock.agentId,
+        age,
+        expiresAt: new Date(lock.expiresAt).toISOString(),
+        isExpired
+      });
+
+      if (isExpired) {
         expired.push({ resourceId, lock });
       }
     }
 
     // Release expired locks
     for (const { resourceId, lock } of expired) {
+      console.warn(`[DistributedLockManager] Releasing expired lock:`, {
+        resourceId,
+        lockId: lock.lockId,
+        agentId: lock.agentId,
+        heldDuration: now - lock.acquiredAt,
+        expiredBy: now - lock.expiresAt
+      });
+
       this.locks.delete(resourceId);
       this.deadlockDetector.releaseResource(resourceId);
 
@@ -328,6 +522,12 @@ class DistributedLockManager extends EventEmitter {
       // Process queue
       await this._processQueue(resourceId);
     }
+
+    console.log(`[DistributedLockManager] Cleanup cycle complete:`, {
+      expiredCount: expired.length,
+      remainingLocks: this.locks.size,
+      totalQueued: Array.from(this.lockQueue.values()).reduce((sum, q) => sum + q.length, 0)
+    });
   }
 
   /**

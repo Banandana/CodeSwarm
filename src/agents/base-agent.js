@@ -33,10 +33,25 @@ class BaseAgent extends EventEmitter {
       conversationHistory: []
     };
 
+    console.log(`[${this.agentType}] Agent initialized:`, {
+      agentId: this.agentId,
+      agentType: this.agentType,
+      maxConcurrentTasks: this.config.maxConcurrentTasks,
+      taskTimeout: this.config.taskTimeout,
+      retryAttempts: this.config.retryAttempts,
+      retryDelay: this.config.retryDelay,
+      heartbeatInterval: this.config.heartbeatInterval,
+      heartbeatEnabled: this.config.heartbeatInterval > 0
+    });
+
     // Start heartbeat only if enabled (0 = disabled)
     // NOTE: Heartbeats disabled by default to prevent message queue saturation
     // with 10+ concurrent agents. Enable with heartbeatInterval > 0 if needed.
     if (this.config.heartbeatInterval > 0) {
+      console.log(`[${this.agentType}] Starting heartbeat:`, {
+        agentId: this.agentId,
+        interval: this.config.heartbeatInterval
+      });
       this._startHeartbeat();
     }
   }
@@ -46,10 +61,19 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<void>}
    */
   async initialize() {
+    console.log(`[${this.agentType}] Initializing agent:`, {
+      agentId: this.agentId,
+      timestamp: new Date().toISOString()
+    });
+
     this.emit('initialized', {
       agentId: this.agentId,
       agentType: this.agentType,
       timestamp: Date.now()
+    });
+
+    console.log(`[${this.agentType}] Agent initialization complete:`, {
+      agentId: this.agentId
     });
   }
 
@@ -71,8 +95,24 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async handleTaskAssignment(task) {
+    console.log(`[${this.agentType}] Task assignment received:`, {
+      agentId: this.agentId,
+      taskId: task.id,
+      taskType: task.type,
+      description: task.description?.substring(0, 100),
+      timestamp: new Date().toISOString()
+    });
+
+    const taskStartTime = Date.now();
+
     try {
       // Update state
+      console.log(`[${this.agentType}] Updating state to 'working':`, {
+        agentId: this.agentId,
+        taskId: task.id,
+        previousStatus: this.state.status
+      });
+
       this.state.status = 'working';
       this.state.currentTask = task;
 
@@ -82,8 +122,23 @@ class BaseAgent extends EventEmitter {
         timestamp: Date.now()
       });
 
+      console.log(`[${this.agentType}] Executing task:`, {
+        agentId: this.agentId,
+        taskId: task.id
+      });
+
       // Execute task with timeout
       const result = await this._executeWithTimeout(task);
+
+      const taskDuration = Date.now() - taskStartTime;
+
+      console.log(`[${this.agentType}] Task execution completed:`, {
+        agentId: this.agentId,
+        taskId: task.id,
+        duration: taskDuration,
+        durationSeconds: (taskDuration / 1000).toFixed(2),
+        resultSize: JSON.stringify(result).length
+      });
 
       // Update state
       this.state.status = 'idle';
@@ -101,6 +156,12 @@ class BaseAgent extends EventEmitter {
         timestamp: Date.now()
       });
 
+      console.log(`[${this.agentType}] Sending task completion message:`, {
+        agentId: this.agentId,
+        taskId: task.id,
+        conversationHistoryLength: this.state.conversationHistory.length
+      });
+
       // Send completion message to coordinator
       await this.sendMessage({
         type: 'TASK_COMPLETE',
@@ -112,9 +173,26 @@ class BaseAgent extends EventEmitter {
         priority: 'NORMAL'
       });
 
+      console.log(`[${this.agentType}] Task completed successfully:`, {
+        agentId: this.agentId,
+        taskId: task.id,
+        totalDuration: Date.now() - taskStartTime
+      });
+
       return result;
 
     } catch (error) {
+      const taskDuration = Date.now() - taskStartTime;
+
+      console.error(`[${this.agentType}] Task execution failed:`, {
+        agentId: this.agentId,
+        taskId: task.id,
+        duration: taskDuration,
+        error: error.message,
+        errorType: error.constructor.name,
+        stack: error.stack?.split('\n').slice(0, 3)
+      });
+
       // Handle task failure
       this.state.status = 'error';
       this.state.failedTasks.push({
@@ -130,6 +208,11 @@ class BaseAgent extends EventEmitter {
         timestamp: Date.now()
       });
 
+      console.log(`[${this.agentType}] Sending task failure notification:`, {
+        agentId: this.agentId,
+        taskId: task.id
+      });
+
       // Notify coordinator of failure
       await this.sendMessage({
         type: 'TASK_FAILED',
@@ -143,6 +226,12 @@ class BaseAgent extends EventEmitter {
 
       throw error;
     } finally {
+      console.log(`[${this.agentType}] Task cleanup:`, {
+        agentId: this.agentId,
+        taskId: task.id,
+        finalStatus: this.state.status
+      });
+
       // Clear current task
       this.state.currentTask = null;
       if (this.state.status !== 'error') {
@@ -212,6 +301,18 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async sendMessage(message) {
+    const payloadSize = JSON.stringify(message.payload || {}).length;
+
+    console.log(`[${this.agentType}] Sending message:`, {
+      agentId: this.agentId,
+      type: message.type,
+      priority: message.priority || 'NORMAL',
+      payloadSize,
+      hasEstimatedCost: !!message.estimatedCost,
+      hasActualCost: !!message.actualCost,
+      timestamp: new Date().toISOString()
+    });
+
     // Use protocol helper to create standardized message
     const fullMessage = MessageProtocol.createMessage(
       message.type,
@@ -228,7 +329,18 @@ class BaseAgent extends EventEmitter {
       fullMessage.actualCost = message.actualCost;
     }
 
-    return await this.communicationHub.routeMessage(fullMessage);
+    const startTime = Date.now();
+    const response = await this.communicationHub.routeMessage(fullMessage);
+    const duration = Date.now() - startTime;
+
+    console.log(`[${this.agentType}] Message sent successfully:`, {
+      agentId: this.agentId,
+      type: message.type,
+      duration,
+      responseSize: JSON.stringify(response).length
+    });
+
+    return response;
   }
 
   /**
@@ -237,10 +349,24 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<string>}
    */
   async readFile(filePath) {
+    console.log(`[${this.agentType}] Requesting file read:`, {
+      agentId: this.agentId,
+      filePath
+    });
+
+    const startTime = Date.now();
     const response = await this.sendMessage({
       type: 'FILE_READ',
       payload: { filePath },
       priority: 'NORMAL'
+    });
+
+    const duration = Date.now() - startTime;
+    console.log(`[${this.agentType}] File read completed:`, {
+      agentId: this.agentId,
+      filePath,
+      duration,
+      contentSize: response.content?.length || 0
     });
 
     return response.content;
@@ -254,10 +380,26 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async writeFile(filePath, content, options = {}) {
+    console.log(`[${this.agentType}] Requesting file write:`, {
+      agentId: this.agentId,
+      filePath,
+      contentSize: content.length,
+      options
+    });
+
+    const startTime = Date.now();
     const response = await this.sendMessage({
       type: 'FILE_WRITE',
       payload: { filePath, content, options },
       priority: 'NORMAL'
+    });
+
+    const duration = Date.now() - startTime;
+    console.log(`[${this.agentType}] File write completed:`, {
+      agentId: this.agentId,
+      filePath,
+      duration,
+      bytesWritten: content.length
     });
 
     return response;
@@ -269,10 +411,24 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<string>} Lock ID
    */
   async acquireLock(filePath) {
+    console.log(`[${this.agentType}] Requesting lock:`, {
+      agentId: this.agentId,
+      resource: filePath
+    });
+
+    const startTime = Date.now();
     const response = await this.sendMessage({
       type: 'LOCK',
       payload: { resource: filePath },
       priority: 'HIGH'
+    });
+
+    const duration = Date.now() - startTime;
+    console.log(`[${this.agentType}] Lock acquired:`, {
+      agentId: this.agentId,
+      resource: filePath,
+      lockId: response.lockId,
+      duration
     });
 
     return response.lockId;
@@ -284,10 +440,23 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<void>}
    */
   async releaseLock(lockId) {
+    console.log(`[${this.agentType}] Releasing lock:`, {
+      agentId: this.agentId,
+      lockId
+    });
+
+    const startTime = Date.now();
     await this.sendMessage({
       type: 'UNLOCK',
       payload: { lockId },
       priority: 'HIGH'
+    });
+
+    const duration = Date.now() - startTime;
+    console.log(`[${this.agentType}] Lock released:`, {
+      agentId: this.agentId,
+      lockId,
+      duration
     });
   }
 
@@ -298,14 +467,41 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async callClaude(messages, options = {}) {
+    console.log(`[${this.agentType}] Requesting Claude API call:`, {
+      agentId: this.agentId,
+      messageCount: messages.length,
+      model: options.model || 'default',
+      maxTokens: options.maxTokens || 'default',
+      priority: options.priority || 'MEDIUM',
+      hasSystemPrompt: !!options.systemPrompt
+    });
+
     // Estimate cost for budget validation
     const estimatedCost = this._estimateClaudeCost(messages, options);
+    console.log(`[${this.agentType}] Claude cost estimated:`, {
+      agentId: this.agentId,
+      estimatedCost: estimatedCost.toFixed(6)
+    });
 
+    const startTime = Date.now();
     const response = await this.sendMessage({
       type: 'CLAUDE_REQUEST',
       payload: { messages, options },
       priority: options.priority || 'MEDIUM',
       estimatedCost: estimatedCost
+    });
+
+    const duration = Date.now() - startTime;
+
+    console.log(`[${this.agentType}] Claude API call completed:`, {
+      agentId: this.agentId,
+      duration,
+      durationSeconds: (duration / 1000).toFixed(2),
+      inputTokens: response.usage?.inputTokens,
+      outputTokens: response.usage?.outputTokens,
+      actualCost: response.usage?.cost?.toFixed(6),
+      estimatedCost: estimatedCost.toFixed(6),
+      costVariance: response.usage?.variance?.toFixed(6)
     });
 
     // Store in conversation history
@@ -314,6 +510,14 @@ class BaseAgent extends EventEmitter {
       response: response.content,
       timestamp: Date.now(),
       cost: response.usage?.cost
+    });
+
+    console.log(`[${this.agentType}] Conversation history updated:`, {
+      agentId: this.agentId,
+      historyLength: this.state.conversationHistory.length,
+      totalCost: this.state.conversationHistory
+        .reduce((sum, entry) => sum + (entry.cost || 0), 0)
+        .toFixed(6)
     });
 
     return response;
@@ -354,7 +558,16 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async requestHandoff(targetAgentType, context) {
-    return await this.sendMessage({
+    console.log(`[${this.agentType}] Requesting handoff:`, {
+      agentId: this.agentId,
+      fromAgent: this.agentType,
+      targetAgentType,
+      contextSize: JSON.stringify(context).length,
+      conversationHistoryLength: this.state.conversationHistory.length
+    });
+
+    const startTime = Date.now();
+    const response = await this.sendMessage({
       type: 'HANDOFF',
       payload: {
         targetAgentType,
@@ -366,6 +579,16 @@ class BaseAgent extends EventEmitter {
       },
       priority: 'HIGH'
     });
+
+    const duration = Date.now() - startTime;
+    console.log(`[${this.agentType}] Handoff completed:`, {
+      agentId: this.agentId,
+      targetAgentType,
+      duration,
+      success: !!response
+    });
+
+    return response;
   }
 
   /**
@@ -375,6 +598,12 @@ class BaseAgent extends EventEmitter {
    * @protected
    */
   parseClaudeJSON(content) {
+    console.log(`[${this.agentType}] Parsing Claude JSON response:`, {
+      agentId: this.agentId,
+      contentLength: content.length,
+      contentPreview: content.substring(0, 100)
+    });
+
     try {
       // Clean up the content first
       let cleanContent = content.trim();
@@ -388,17 +617,39 @@ class BaseAgent extends EventEmitter {
         /```\s+([\s\S]*?)\s*```/        // ``` ...\n```
       ];
 
-      for (const pattern of patterns) {
+      console.log(`[${this.agentType}] Attempting regex pattern matching:`, {
+        agentId: this.agentId,
+        patternCount: patterns.length
+      });
+
+      for (let i = 0; i < patterns.length; i++) {
+        const pattern = patterns[i];
         const match = cleanContent.match(pattern);
         if (match && match[1]) {
+          console.log(`[${this.agentType}] Pattern ${i + 1} matched:`, {
+            agentId: this.agentId,
+            extractedLength: match[1].length
+          });
           try {
-            return JSON.parse(match[1].trim());
+            const parsed = JSON.parse(match[1].trim());
+            console.log(`[${this.agentType}] Successfully parsed with pattern ${i + 1}:`, {
+              agentId: this.agentId,
+              objectKeys: Object.keys(parsed).length
+            });
+            return parsed;
           } catch (e) {
-            // This pattern didn't work, try next
+            console.warn(`[${this.agentType}] Pattern ${i + 1} extraction failed:`, {
+              agentId: this.agentId,
+              error: e.message
+            });
             continue;
           }
         }
       }
+
+      console.log(`[${this.agentType}] No patterns matched, trying string replacement:`, {
+        agentId: this.agentId
+      });
 
       // Strategy 2: Remove code fences with string replacement
       jsonStr = cleanContent
@@ -409,22 +660,55 @@ class BaseAgent extends EventEmitter {
 
       // Try to parse the cleaned string
       try {
-        return JSON.parse(jsonStr);
+        const parsed = JSON.parse(jsonStr);
+        console.log(`[${this.agentType}] Successfully parsed with string replacement:`, {
+          agentId: this.agentId,
+          objectKeys: Object.keys(parsed).length
+        });
+        return parsed;
       } catch (e) {
+        console.warn(`[${this.agentType}] String replacement parsing failed:`, {
+          agentId: this.agentId,
+          error: e.message
+        });
+
         // Strategy 3: Find JSON object boundaries
         const jsonMatch = cleanContent.match(/(\{[\s\S]*\})/);
         if (jsonMatch) {
-          return JSON.parse(jsonMatch[1].trim());
+          console.log(`[${this.agentType}] Found JSON object boundaries:`, {
+            agentId: this.agentId,
+            extractedLength: jsonMatch[1].length
+          });
+          const parsed = JSON.parse(jsonMatch[1].trim());
+          console.log(`[${this.agentType}] Successfully parsed with boundary detection:`, {
+            agentId: this.agentId,
+            objectKeys: Object.keys(parsed).length
+          });
+          return parsed;
         }
       }
 
+      console.log(`[${this.agentType}] Attempting raw content parse:`, {
+        agentId: this.agentId
+      });
+
       // Strategy 4: Last resort - try raw content
-      return JSON.parse(cleanContent);
+      const parsed = JSON.parse(cleanContent);
+      console.log(`[${this.agentType}] Successfully parsed raw content:`, {
+        agentId: this.agentId,
+        objectKeys: Object.keys(parsed).length
+      });
+      return parsed;
 
     } catch (error) {
       // Log full response for debugging
-      console.error(`[${this.agentId}] Parse error:`, error.message);
-      console.error(`[${this.agentId}] Response preview:`, content.substring(0, 1000));
+      console.error(`[${this.agentType}] Parse error - all strategies failed:`, {
+        agentId: this.agentId,
+        error: error.message,
+        errorType: error.constructor.name,
+        contentLength: content.length,
+        contentPreview: content.substring(0, 1000)
+      });
 
       throw new AgentError(
         `Failed to parse Claude response: ${error.message}`,
@@ -443,13 +727,32 @@ class BaseAgent extends EventEmitter {
    * @returns {Object} { valid: boolean, reason?: string }
    */
   validateTask(task) {
+    console.log(`[${this.agentType}] Validating task:`, {
+      agentId: this.agentId,
+      taskId: task.id,
+      hasDescription: !!task.description,
+      taskType: task.type
+    });
+
     if (!task.id) {
+      console.warn(`[${this.agentType}] Task validation failed: Missing ID`, {
+        agentId: this.agentId
+      });
       return { valid: false, reason: 'Task missing ID' };
     }
 
     if (!task.description) {
+      console.warn(`[${this.agentType}] Task validation failed: Missing description`, {
+        agentId: this.agentId,
+        taskId: task.id
+      });
       return { valid: false, reason: 'Task missing description' };
     }
+
+    console.log(`[${this.agentType}] Task validation passed:`, {
+      agentId: this.agentId,
+      taskId: task.id
+    });
 
     // Subclasses can add more validation
     return { valid: true };
@@ -520,18 +823,54 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<any>}
    */
   async retryWithBackoff(operation, attempt = 1) {
+    console.log(`[${this.agentType}] Retry attempt ${attempt}/${this.config.retryAttempts}:`, {
+      agentId: this.agentId,
+      attempt,
+      maxAttempts: this.config.retryAttempts
+    });
+
+    const attemptStartTime = Date.now();
+
     try {
-      return await operation();
+      const result = await operation();
+      const duration = Date.now() - attemptStartTime;
+
+      console.log(`[${this.agentType}] Operation succeeded on attempt ${attempt}:`, {
+        agentId: this.agentId,
+        attempt,
+        duration
+      });
+
+      return result;
     } catch (error) {
-      console.error(`[${this.agentId}] Operation failed (attempt ${attempt}/${this.config.retryAttempts}):`, error.message);
+      const duration = Date.now() - attemptStartTime;
+
+      console.error(`[${this.agentType}] Operation failed (attempt ${attempt}/${this.config.retryAttempts}):`, {
+        agentId: this.agentId,
+        attempt,
+        maxAttempts: this.config.retryAttempts,
+        duration,
+        error: error.message,
+        errorType: error.constructor.name
+      });
 
       if (attempt >= this.config.retryAttempts) {
-        console.error(`[${this.agentId}] Max retries reached, failing operation`);
+        console.error(`[${this.agentType}] Max retries reached, failing operation:`, {
+          agentId: this.agentId,
+          totalAttempts: attempt,
+          finalError: error.message
+        });
         throw error;
       }
 
       const delay = this.config.retryDelay * Math.pow(2, attempt - 1);
-      console.log(`[${this.agentId}] Retrying in ${delay}ms...`);
+      console.log(`[${this.agentType}] Retrying with backoff:`, {
+        agentId: this.agentId,
+        delay,
+        delaySeconds: (delay / 1000).toFixed(2),
+        nextAttempt: attempt + 1
+      });
+
       await new Promise(resolve => setTimeout(resolve, delay));
 
       return this.retryWithBackoff(operation, attempt + 1);
@@ -543,13 +882,44 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<void>}
    */
   async shutdown() {
+    console.log(`[${this.agentType}] Shutting down agent:`, {
+      agentId: this.agentId,
+      currentStatus: this.state.status,
+      hasCurrentTask: !!this.state.currentTask,
+      completedTasks: this.state.completedTasks.length,
+      failedTasks: this.state.failedTasks.length,
+      conversationHistoryLength: this.state.conversationHistory.length
+    });
+
+    const totalCost = this.state.conversationHistory
+      .reduce((sum, entry) => sum + (entry.cost || 0), 0);
+
+    console.log(`[${this.agentType}] Agent statistics:`, {
+      agentId: this.agentId,
+      totalTasks: this.state.completedTasks.length + this.state.failedTasks.length,
+      successRate: this.state.completedTasks.length > 0
+        ? ((this.state.completedTasks.length / (this.state.completedTasks.length + this.state.failedTasks.length)) * 100).toFixed(2) + '%'
+        : 'N/A',
+      totalCost: totalCost.toFixed(6),
+      apiCalls: this.state.conversationHistory.length
+    });
+
     this._stopHeartbeat();
+
+    console.log(`[${this.agentType}] Heartbeat stopped:`, {
+      agentId: this.agentId
+    });
 
     this.emit('shutdown', {
       agentId: this.agentId,
       completedTasks: this.state.completedTasks.length,
       failedTasks: this.state.failedTasks.length,
       timestamp: Date.now()
+    });
+
+    console.log(`[${this.agentType}] Agent shutdown complete:`, {
+      agentId: this.agentId,
+      timestamp: new Date().toISOString()
     });
   }
 
@@ -558,7 +928,16 @@ class BaseAgent extends EventEmitter {
    * @returns {Object}
    */
   serialize() {
-    return {
+    console.log(`[${this.agentType}] Serializing agent state:`, {
+      agentId: this.agentId,
+      status: this.state.status,
+      hasCurrentTask: !!this.state.currentTask,
+      completedTasks: this.state.completedTasks.length,
+      failedTasks: this.state.failedTasks.length,
+      conversationHistoryLength: this.state.conversationHistory.length
+    });
+
+    const serialized = {
       agentId: this.agentId,
       agentType: this.agentType,
       status: this.state.status,
@@ -568,6 +947,16 @@ class BaseAgent extends EventEmitter {
       conversationHistory: this.state.conversationHistory,
       timestamp: Date.now()
     };
+
+    const serializedSize = JSON.stringify(serialized).length;
+
+    console.log(`[${this.agentType}] State serialization complete:`, {
+      agentId: this.agentId,
+      serializedSize,
+      timestamp: new Date().toISOString()
+    });
+
+    return serialized;
   }
 
   /**
@@ -575,6 +964,16 @@ class BaseAgent extends EventEmitter {
    * @param {Object} state - Serialized state
    */
   restore(state) {
+    console.log(`[${this.agentType}] Restoring agent state:`, {
+      agentId: this.agentId,
+      restoredStatus: state.status,
+      hasCurrentTask: !!state.currentTask,
+      completedTasks: state.completedTasks?.length || 0,
+      failedTasks: state.failedTasks?.length || 0,
+      conversationHistoryLength: state.conversationHistory?.length || 0,
+      checkpointTimestamp: state.timestamp ? new Date(state.timestamp).toISOString() : 'N/A'
+    });
+
     this.state.status = state.status || 'idle';
     this.state.currentTask = state.currentTask || null;
     this.state.completedTasks = state.completedTasks || [];
@@ -584,6 +983,12 @@ class BaseAgent extends EventEmitter {
     this.emit('restored', {
       agentId: this.agentId,
       timestamp: Date.now()
+    });
+
+    console.log(`[${this.agentType}] Agent state restored:`, {
+      agentId: this.agentId,
+      currentStatus: this.state.status,
+      timestamp: new Date().toISOString()
     });
   }
 }
