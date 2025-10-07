@@ -27,7 +27,7 @@ CodeSwarm is a multi-agent autonomous code generation system that transforms pro
 ### ⚠️ Status
 - Experimental software under active development
 - Use with caution and test thoroughly
-- Feedback and bug reports welcome
+- Feedback and bug reports NOT welcome. Don't bother me.
 
 ---
 
