@@ -193,6 +193,7 @@ class CodeSwarm {
     // Budget manager
     this.components.budget = new BudgetManager({
       maxBudget: options.budget || this.config.budgetLimit,
+      minReserve: parseFloat(process.env.MIN_BUDGET_RESERVE) || 1.0,
       warningThreshold: 0.9
     });
 

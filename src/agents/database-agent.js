@@ -204,9 +204,9 @@ class DatabaseAgent extends BaseAgent {
     }
 
     for (const file of files) {
-      // Acquire lock BEFORE try block for modify operations
+      // Acquire lock BEFORE try block for create and modify operations
       let lockId = null;
-      if (file.action === 'modify') {
+      if (file.action === 'modify' || file.action === 'create') {
         lockId = await this.acquireLock(file.path);
 
         // Validate lock was acquired
