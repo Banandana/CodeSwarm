@@ -4,6 +4,10 @@
 
 CodeSwarm is a multi-agent autonomous code generation system that transforms project proposals into code with intelligent task decomposition, budget management, and crash recovery. It is 100% AI slop code almost entirely generated via an LLM. The future is now, bitches. The slop is here.
 
+![no-fucking-money](https://media2.giphy.com/media/v1.Y2lkPTc5MGI3NjExeGdraGt1ZXZidm5uaG0yamp1azN5ZHpobHF1cW03amZsc3lpemN0MiZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o6UB5RrlQuMfZp82Y/giphy.gif)
+
+And so is my LLM API usage bill.
+
 ---
 
 ## 🎯 Current Status
