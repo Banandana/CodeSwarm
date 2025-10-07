@@ -14,6 +14,7 @@ class CoordinatorAgent extends BaseAgent {
     this.orchestration = {
       projectPlan: null,
       features: [],
+      specifications: [], // Enhancement 1: Store feature specifications
       featureCoordinators: new Map(),
       taskQueue: [],
       activeTasks: new Map(),
@@ -102,6 +103,168 @@ class CoordinatorAgent extends BaseAgent {
   }
 
   /**
+   * Generate specifications for all features with quality validation
+   * @param {Object} projectContext - Project context
+   * @returns {Promise<Array>} Array of validated specifications
+   */
+  async generateSpecifications(projectContext = {}) {
+    console.log(`[${this.agentId}] Generating specifications for ${this.orchestration.features.length} features`);
+
+    const SpecificationAgent = require('./specification-agent');
+    const SpecificationQualityGate = require('../validation/spec-quality-gate');
+
+    const qualityGate = new SpecificationQualityGate();
+    const specAgent = new SpecificationAgent('spec-temp', this.communicationHub);
+    await specAgent.initialize();
+
+    const specifications = [];
+
+    for (const feature of this.orchestration.features) {
+      let spec = null;
+      let attempts = 0;
+      const maxAttempts = 3;
+
+      while (attempts < maxAttempts) {
+        try {
+          // Generate spec
+          console.log(`[${this.agentId}] Generating spec for ${feature.name} (attempt ${attempts + 1})`);
+          spec = await specAgent.generateSpecification(feature, {
+            ...projectContext,
+            existingSpecs: specifications
+          });
+
+          // Quality gate validation
+          console.log(`[${this.agentId}] Validating spec quality for ${spec.specId}`);
+          const quality = await qualityGate.validateSpec(spec);
+
+          console.log(`[${this.agentId}] Spec quality: ${quality.overallScore}/100 (${quality.recommendation})`);
+
+          if (quality.passed) {
+            // Spec is good!
+            console.log(`[${this.agentId}] ✓ Spec passed quality gate: ${spec.specId}`);
+            break;
+          } else if (quality.recommendation === 'revise' && attempts < maxAttempts - 1) {
+            // Try to fix spec with feedback
+            console.log(`[${this.agentId}] Revising spec based on quality feedback`);
+            spec = await specAgent.reviseSpecification(spec, quality.checks);
+            attempts++;
+          } else {
+            // Regenerate from scratch
+            console.log(`[${this.agentId}] Regenerating spec from scratch`);
+            spec = null; // Will regenerate
+            attempts++;
+          }
+        } catch (error) {
+          console.error(`[${this.agentId}] Spec generation failed for ${feature.name}:`, error.message);
+          attempts++;
+
+          if (attempts >= maxAttempts) {
+            // Give up, continue without spec
+            console.warn(`[${this.agentId}] Could not generate quality spec for ${feature.name} after ${maxAttempts} attempts`);
+            spec = {
+              specId: null,
+              featureId: feature.id,
+              error: error.message,
+              fallback: true
+            };
+          }
+        }
+      }
+
+      // Save spec if generated
+      if (spec && spec.specId) {
+        await specAgent.saveSpecification(spec);
+      }
+
+      specifications.push(spec);
+    }
+
+    // Store specs in orchestration
+    this.orchestration.specifications = specifications;
+
+    console.log(`[${this.agentId}] Generated ${specifications.filter(s => s.specId).length}/${specifications.length} specifications`);
+
+    return specifications;
+  }
+
+  /**
+   * Generate system architecture before feature specification
+   * @returns {Promise<Object>} Architecture specification
+   */
+  async generateArchitecture() {
+    const ENABLE_ARCHITECTURE = process.env.ENABLE_ARCHITECTURE !== 'false'; // Default to enabled
+
+    if (!ENABLE_ARCHITECTURE) {
+      console.log(`[${this.agentId}] Architecture generation disabled, skipping`);
+      return null;
+    }
+
+    console.log(`[${this.agentId}] Generating system architecture`);
+
+    const ArchitecturalDesignAgent = require('./architectural-design-agent');
+    const ArchitectureQualityGate = require('../validation/architecture-quality-gate');
+
+    const archAgent = new ArchitecturalDesignAgent('arch-agent', this.communicationHub);
+    const qualityGate = new ArchitectureQualityGate();
+
+    await archAgent.initialize();
+
+    let architecture = null;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+      try {
+        // Generate architecture
+        console.log(`[${this.agentId}] Architecture generation attempt ${attempts + 1}/${maxAttempts}`);
+        architecture = await archAgent.designArchitecture(
+          this.orchestration.projectPlan,
+          this.orchestration.features
+        );
+
+        // Validate architecture quality
+        console.log(`[${this.agentId}] Validating architecture quality`);
+        const quality = await qualityGate.validate(architecture);
+
+        console.log(`[${this.agentId}] Architecture quality: Score=${quality.overallScore}, Passed=${quality.passed}`);
+
+        if (quality.passed) {
+          console.log(`[${this.agentId}] ✓ Architecture passed quality gate`);
+          break;
+        } else if (quality.recommendation === 'revise' && attempts < maxAttempts - 1) {
+          console.log(`[${this.agentId}] Revising architecture based on quality feedback`);
+          architecture = await archAgent.reviseArchitecture(architecture, quality.issues);
+          attempts++;
+        } else {
+          console.log(`[${this.agentId}] Regenerating architecture from scratch`);
+          architecture = null; // Will regenerate
+          attempts++;
+        }
+      } catch (error) {
+        console.error(`[${this.agentId}] Architecture generation failed:`, error.message);
+        attempts++;
+
+        if (attempts >= maxAttempts) {
+          console.warn(`[${this.agentId}] Could not generate quality architecture after ${maxAttempts} attempts, using fallback`);
+          // Use a minimal fallback architecture
+          architecture = this._createFallbackArchitecture();
+        }
+      }
+    }
+
+    // Store architecture in orchestration
+    this.orchestration.architecture = architecture;
+
+    // Save to state for other agents
+    if (architecture) {
+      await this.writeState('architecture:current', architecture);
+      console.log(`[${this.agentId}] Architecture saved to state: ${architecture.architectureId}`);
+    }
+
+    return architecture;
+  }
+
+  /**
    * Execute project plan
    * @returns {Promise<Object>}
    */
@@ -120,6 +283,28 @@ class CoordinatorAgent extends BaseAgent {
     });
 
     try {
+      // NEW: Generate architecture before specifications
+      if (!this.orchestration.architecture) {
+        const architecture = await this.generateArchitecture();
+
+        // Load constraint engine with architecture constraints
+        if (architecture && architecture.constraints) {
+          const ConstraintEngine = require('../constraints/constraint-engine');
+          this.constraintEngine = new ConstraintEngine();
+          this.constraintEngine.loadConstraints(architecture);
+          console.log(`[${this.agentId}] Loaded architectural constraints`);
+        }
+      }
+
+      // Generate specifications with architecture context
+      if (this.orchestration.specifications.length === 0) {
+        const projectContext = {
+          architecture: this.orchestration.architecture,
+          projectInfo: plan.projectInfo
+        };
+        await this.generateSpecifications(projectContext);
+      }
+
       // Skip feature planning if already have feature coordinators (from resume)
       if (this.orchestration.featureCoordinators.size === 0) {
         // Spawn feature coordinators and plan all features
@@ -154,6 +339,48 @@ class CoordinatorAgent extends BaseAgent {
         }
       );
     }
+  }
+
+  /**
+   * Create fallback architecture when generation fails
+   * @private
+   */
+  _createFallbackArchitecture() {
+    return {
+      architectureId: `arch-fallback-${Date.now()}`,
+      version: '1.0',
+      fallback: true,
+      overview: {
+        style: 'monolithic',
+        description: 'Fallback architecture - manual review recommended'
+      },
+      components: this.orchestration.features.map(f => ({
+        id: f.id,
+        name: f.name,
+        type: 'service',
+        responsibility: f.description
+      })),
+      dataArchitecture: {
+        databases: [{
+          id: 'main-db',
+          type: 'PostgreSQL',
+          purpose: 'Primary data store'
+        }]
+      },
+      securityArchitecture: {
+        authentication: { type: 'JWT' },
+        authorization: { model: 'RBAC' }
+      },
+      patterns: {
+        architectural: ['monolithic'],
+        design: ['mvc', 'repository']
+      },
+      constraints: {
+        technical: [],
+        performance: [],
+        security: []
+      }
+    };
   }
 
   /**

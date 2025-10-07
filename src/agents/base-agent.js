@@ -90,6 +90,63 @@ class BaseAgent extends EventEmitter {
   }
 
   /**
+   * Load architectural constraints for task execution
+   * @param {Object} task - Task being executed
+   * @returns {Promise<Object>} Constraints and patterns
+   */
+  async loadArchitecturalContext(task) {
+    try {
+      // Load architecture from state
+      const architecture = await this.readState('architecture:current');
+
+      if (!architecture) {
+        console.log(`[${this.agentType}] No architecture found in state`);
+        return null;
+      }
+
+      const context = {
+        architecture,
+        constraints: null,
+        component: null,
+        patterns: architecture.patterns
+      };
+
+      // Find matching component
+      if (architecture.components) {
+        context.component = architecture.components.find(c =>
+          c.id === task.componentId ||
+          c.id === task.targetComponent ||
+          task.files?.some(f => f.includes(c.id))
+        );
+      }
+
+      // Load constraints
+      if (architecture.constraints) {
+        const ConstraintEngine = require('../constraints/constraint-engine');
+        const engine = new ConstraintEngine();
+        engine.loadConstraints(architecture);
+
+        // Get constraints for this task
+        const taskContext = {
+          componentId: context.component?.id || task.componentId,
+          taskType: task.type,
+          agentType: this.agentType
+        };
+
+        context.constraints = engine.getConstraintInstructions(task);
+      }
+
+      console.log(`[${this.agentType}] Loaded architectural context for task ${task.id}`);
+
+      return context;
+
+    } catch (error) {
+      console.warn(`[${this.agentType}] Failed to load architectural context: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
    * Handle task assignment from coordinator
    * @param {Object} task - Task object
    * @returns {Promise<Object>}
