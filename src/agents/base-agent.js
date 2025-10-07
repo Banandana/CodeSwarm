@@ -154,9 +154,11 @@ class BaseAgent extends EventEmitter {
   async _executeWithTimeout(task) {
     const timeoutMs = this.config.taskTimeout || 180000; // 3 minutes default
 
-    return new Promise(async (resolve, reject) => {
-      const timeout = setTimeout(() => {
-        console.error(`[${this.agentId}] Task timeout after ${timeoutMs}ms:`, {
+    console.log(`[${this.agentId}] Starting task with ${timeoutMs}ms timeout:`, task.id);
+
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        console.error(`[${this.agentId}] ⏱️ Task timeout after ${timeoutMs}ms:`, {
           taskId: task.id,
           agentType: this.agentType
         });
@@ -165,16 +167,19 @@ class BaseAgent extends EventEmitter {
           { agentId: this.agentId, taskId: task.id, timeout: timeoutMs }
         ));
       }, timeoutMs);
-
-      try {
-        const result = await this.executeTask(task);
-        clearTimeout(timeout);
-        resolve(result);
-      } catch (error) {
-        clearTimeout(timeout);
-        reject(error);
-      }
     });
+
+    try {
+      const result = await Promise.race([
+        this.executeTask(task),
+        timeoutPromise
+      ]);
+      console.log(`[${this.agentId}] ✓ Task completed:`, task.id);
+      return result;
+    } catch (error) {
+      console.error(`[${this.agentId}] ✗ Task failed:`, task.id, error.message);
+      throw error;
+    }
   }
 
   /**

@@ -18,7 +18,10 @@ class BackendAgent extends BaseAgent {
    * @returns {Promise<Object>}
    */
   async executeTask(task) {
+    console.log(`[BackendAgent] executeTask called for task:`, task.id);
+
     // Validate task
+    console.log(`[BackendAgent] Validating task...`);
     const validation = this.validateTask(task);
     if (!validation.valid) {
       throw new AgentError(
@@ -28,13 +31,18 @@ class BackendAgent extends BaseAgent {
     }
 
     // Prepare context for prompt generation
+    console.log(`[BackendAgent] Preparing context...`);
     const context = await this._prepareContext(task);
+    console.log(`[BackendAgent] Context prepared`);
 
     // Generate prompt
+    console.log(`[BackendAgent] Generating prompt...`);
     const { systemPrompt, userPrompt, temperature, maxTokens } =
       generateBackendPrompt(task, context);
+    console.log(`[BackendAgent] Prompt generated (${userPrompt.length} chars)`);
 
     // Call Claude API
+    console.log(`[BackendAgent] Calling Claude API...`);
     const response = await this.retryWithBackoff(async () => {
       return await this.callClaude(
         [{ role: 'user', content: userPrompt }],
@@ -46,12 +54,17 @@ class BackendAgent extends BaseAgent {
         }
       );
     });
+    console.log(`[BackendAgent] Claude API responded (${response.content?.length || 0} chars)`);
 
     // Parse response
+    console.log(`[BackendAgent] Parsing response...`);
     const result = this._parseResponse(response.content);
+    console.log(`[BackendAgent] Response parsed, ${result.files?.length || 0} files to write`);
 
     // Execute file operations
+    console.log(`[BackendAgent] Executing file operations...`);
     await this._executeFileOperations(result.files, task);
+    console.log(`[BackendAgent] File operations complete`);
 
     // Return result
     return {

@@ -76,8 +76,12 @@ class ClaudeClient {
         request.system = options.systemPrompt;
       }
 
+      console.log(`[ClaudeClient] Making API call (model: ${request.model}, max_tokens: ${request.max_tokens})...`);
+
       // Make API call
       const response = await this.client.messages.create(request);
+
+      console.log(`[ClaudeClient] API call completed in ${Date.now() - startTime}ms`);
 
       // Calculate actual cost
       const actualCost = this._calculateActualCost(
