@@ -16,7 +16,11 @@ class BudgetManager extends EventEmitter {
       maxBudget: config.maxBudget || 100.0,
       minReserve: config.minReserve || 10.0,
       warningThreshold: config.warningThreshold || 0.9,
-      stepTimeout: config.stepTimeout || 5000,
+      // stepTimeout: Operation timeout before cleanup (default 2 minutes)
+      //   - Set to 120s to accommodate Claude API response times (15-30s typical)
+      //   - ClaudeClient has its own 10-minute timeout for complex responses
+      //   - Operations failing before this timeout will still be cleaned up
+      stepTimeout: config.stepTimeout || 120000,  // 2 minutes (was 5000ms)
       model: config.model || 'claude-3-sonnet-20240229'
     };
 

@@ -252,16 +252,11 @@ class CodeSwarm {
 
     const claudeRequestHandler = async (message) => {
       try {
-        // Pass message.id as operationId to avoid double validation
-        const options = {
-          ...message.payload.options,
-          operationId: message.id
-        };
-
+        // ClaudeClient handles its own budget validation
         const result = await this.components.claude.sendMessage(
           message.payload.messages,
           message.agentId,
-          options
+          message.payload.options
         );
         // Emit response event that the hub is waiting for
         this.components.hub.emit(`CLAUDE_RESPONSE_${message.id}`, result);

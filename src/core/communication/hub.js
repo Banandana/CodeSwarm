@@ -56,22 +56,9 @@ class CommunicationHub extends EventEmitter {
       // Validate message
       MessageProtocol.validateMessage(message);
 
-      // Budget validation if required
-      if (message.requiresBudget && message.estimatedCost) {
-        const validation = await this.budgetManager.validateOperation(
-          message.id,
-          message.estimatedCost,
-          message.agentId,
-          message.priority === MessageProtocol.PRIORITIES.HIGH ? 'HIGH' : 'MEDIUM'
-        );
-
-        if (!validation.approved) {
-          throw new CommunicationError('Budget validation failed', {
-            messageId: message.id,
-            agentId: message.agentId
-          });
-        }
-      }
+      // NOTE: Budget validation for CLAUDE_REQUEST is handled by ClaudeClient
+      // to avoid double validation and ensure proper operation ID tracking.
+      // Other message types that require budget could be validated here in the future.
 
       // Add to queue with priority
       return await this._enqueueMessage(message);

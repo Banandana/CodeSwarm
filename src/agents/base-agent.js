@@ -298,10 +298,14 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async callClaude(messages, options = {}) {
+    // Estimate cost for budget validation
+    const estimatedCost = this._estimateClaudeCost(messages, options);
+
     const response = await this.sendMessage({
       type: 'CLAUDE_REQUEST',
       payload: { messages, options },
-      priority: options.priority || 'MEDIUM'
+      priority: options.priority || 'MEDIUM',
+      estimatedCost: estimatedCost
     });
 
     // Store in conversation history
@@ -313,6 +317,34 @@ class BaseAgent extends EventEmitter {
     });
 
     return response;
+  }
+
+  /**
+   * Estimate Claude API cost
+   * @private
+   */
+  _estimateClaudeCost(messages, options = {}) {
+    // Approximate cost estimation (same as ClaudeClient)
+    const costs = {
+      'claude-3-opus-20240229': { input: 0.000015, output: 0.000075 },
+      'claude-3-sonnet-20240229': { input: 0.000003, output: 0.000015 },
+      'claude-3-5-sonnet-20241022': { input: 0.000003, output: 0.000015 },
+      'claude-3-haiku-20240307': { input: 0.00000025, output: 0.00000125 },
+      'claude-sonnet-4-5': { input: 0.000003, output: 0.000015 },
+      'claude-sonnet-4-5-20250929': { input: 0.000003, output: 0.000015 }
+    };
+
+    const model = options.model || process.env.CLAUDE_MODEL || 'claude-3-sonnet-20240229';
+    const modelCosts = costs[model] || costs['claude-3-sonnet-20240229'];
+
+    // Estimate input tokens (with 20% buffer)
+    const inputText = messages.map(m => m.content).join('\n');
+    const inputTokens = Math.ceil((inputText.length / 4) * 1.2);
+
+    // Estimate output tokens (use max as conservative estimate)
+    const maxTokens = options.maxTokens || 4000;
+
+    return (inputTokens * modelCosts.input) + (maxTokens * modelCosts.output);
   }
 
   /**

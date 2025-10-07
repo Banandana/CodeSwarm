@@ -46,20 +46,18 @@ class ClaudeClient {
     Validator.validateMessages(messages);
     Validator.validateAgentId(agentId);
 
-    // Use provided operationId if available (already validated), otherwise create new one
-    const operationId = options.operationId || uuidv4();
+    // Always create new operationId for budget tracking
+    const operationId = uuidv4();
     const estimatedCost = this._estimateCost(messages, options);
 
     try {
-      // Budget validation (skip if operationId was provided - already validated)
-      if (!options.operationId) {
-        await this.budgetManager.validateOperation(
-          operationId,
-          estimatedCost,
-          agentId,
-          options.priority || 'MEDIUM'
-        );
-      }
+      // Always validate budget for this specific operation
+      await this.budgetManager.validateOperation(
+        operationId,
+        estimatedCost,
+        agentId,
+        options.priority || 'MEDIUM'
+      );
 
       const startTime = Date.now();
 
@@ -141,9 +139,9 @@ class ClaudeClient {
 
       // Clean up budget reservation on failure
       try {
-        await this.budgetManager.recordUsage(operationId, 0);
+        await this.budgetManager.releaseReservation(operationId);
       } catch (cleanupError) {
-        console.error(`[ClaudeClient] Failed to clean up budget:`, cleanupError.message);
+        console.error(`[ClaudeClient] Failed to release reservation:`, cleanupError.message);
       }
 
       // Handle specific API errors
@@ -183,20 +181,18 @@ class ClaudeClient {
    * @returns {Promise<Object>}
    */
   async streamMessage(messages, agentId, onChunk, options = {}) {
-    // Use provided operationId if available (already validated), otherwise create new one
-    const operationId = options.operationId || uuidv4();
+    // Always create new operationId for budget tracking
+    const operationId = uuidv4();
     const estimatedCost = this._estimateCost(messages, options);
 
     try {
-      // Budget validation (skip if operationId was provided - already validated)
-      if (!options.operationId) {
-        await this.budgetManager.validateOperation(
-          operationId,
-          estimatedCost,
-          agentId,
-          options.priority || 'MEDIUM'
-        );
-      }
+      // Always validate budget for this specific operation
+      await this.budgetManager.validateOperation(
+        operationId,
+        estimatedCost,
+        agentId,
+        options.priority || 'MEDIUM'
+      );
 
       const startTime = Date.now();
 
@@ -270,8 +266,9 @@ class ClaudeClient {
       };
 
     } catch (error) {
+      // Clean up budget reservation on failure
       try {
-        await this.budgetManager.recordUsage(operationId, 0);
+        await this.budgetManager.releaseReservation(operationId);
       } catch (cleanupError) {
         // Ignore
       }
