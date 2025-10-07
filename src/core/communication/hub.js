@@ -293,10 +293,12 @@ class CommunicationHub extends EventEmitter {
     return new Promise((resolve, reject) => {
       const responseEvent = `CLAUDE_RESPONSE_${message.id}`;
       const errorEvent = `CLAUDE_ERROR_${message.id}`;
+      let timeoutId;
 
       const cleanup = () => {
         this.removeAllListeners(responseEvent);
         this.removeAllListeners(errorEvent);
+        if (timeoutId) clearTimeout(timeoutId);
       };
 
       this.once(responseEvent, (result) => {
@@ -313,7 +315,7 @@ class CommunicationHub extends EventEmitter {
       this.emit('CLAUDE_REQUEST', message);
 
       // Timeout after 2 minutes
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         cleanup();
         reject(new Error('Claude request timed out'));
       }, 120000);
@@ -363,10 +365,12 @@ class CommunicationHub extends EventEmitter {
     return new Promise((resolve, reject) => {
       const responseEvent = `FILE_READ_RESPONSE_${message.id}`;
       const errorEvent = `FILE_READ_ERROR_${message.id}`;
+      let timeoutId;
 
       const cleanup = () => {
         this.removeAllListeners(responseEvent);
         this.removeAllListeners(errorEvent);
+        if (timeoutId) clearTimeout(timeoutId);
       };
 
       this.once(responseEvent, (result) => {
@@ -383,7 +387,7 @@ class CommunicationHub extends EventEmitter {
       this.emit('FILE_READ', message);
 
       // Timeout after 30 seconds
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         cleanup();
         reject(new Error('File read timeout'));
       }, 30000);
@@ -398,10 +402,12 @@ class CommunicationHub extends EventEmitter {
     return new Promise((resolve, reject) => {
       const responseEvent = `FILE_WRITE_RESPONSE_${message.id}`;
       const errorEvent = `FILE_WRITE_ERROR_${message.id}`;
+      let timeoutId;
 
       const cleanup = () => {
         this.removeAllListeners(responseEvent);
         this.removeAllListeners(errorEvent);
+        if (timeoutId) clearTimeout(timeoutId);
       };
 
       this.once(responseEvent, (result) => {
@@ -418,7 +424,7 @@ class CommunicationHub extends EventEmitter {
       this.emit('FILE_WRITE', message);
 
       // Timeout after 30 seconds
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         cleanup();
         reject(new Error('File write timeout'));
       }, 30000);
@@ -560,8 +566,8 @@ class CommunicationHub extends EventEmitter {
         return;
       }
 
-      // Process message
-      setImmediate(() => this._processMessage(message));
+      // Process message synchronously to prevent duplicate processing
+      await this._processMessage(message);
 
     } finally {
       this.processing = false;

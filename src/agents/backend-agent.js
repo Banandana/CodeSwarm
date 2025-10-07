@@ -44,17 +44,23 @@ class BackendAgent extends BaseAgent {
     // Call Claude API
     console.log(`[BackendAgent] Calling Claude API...`);
     const response = await this.retryWithBackoff(async () => {
-      return await this.callClaude(
-        [{ role: 'user', content: userPrompt }],
-        {
-          systemPrompt,
-          temperature,
-          maxTokens,
-          priority: task.priority || 'MEDIUM'
-        }
-      );
+      try {
+        const claudeResponse = await this.callClaude(
+          [{ role: 'user', content: userPrompt }],
+          {
+            systemPrompt,
+            temperature,
+            maxTokens,
+            priority: task.priority || 'MEDIUM'
+          }
+        );
+        console.log(`[BackendAgent] Claude API responded (${claudeResponse.content?.length || 0} chars)`);
+        return claudeResponse;
+      } catch (error) {
+        console.error(`[BackendAgent] Claude API call failed:`, error.message);
+        throw error;
+      }
     });
-    console.log(`[BackendAgent] Claude API responded (${response.content?.length || 0} chars)`);
 
     // Parse response
     console.log(`[BackendAgent] Parsing response...`);
@@ -124,25 +130,7 @@ class BackendAgent extends BaseAgent {
    * @private
    */
   _parseResponse(content) {
-    try {
-      // Try to extract JSON from response
-      // Claude sometimes wraps JSON in markdown code blocks
-      const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) ||
-                       content.match(/```\n([\s\S]*?)\n```/) ||
-                       [null, content];
-
-      const jsonStr = jsonMatch[1] || content;
-      return JSON.parse(jsonStr.trim());
-
-    } catch (error) {
-      throw new AgentError(
-        `Failed to parse Claude response: ${error.message}`,
-        {
-          agentId: this.agentId,
-          content: content.substring(0, 200) // First 200 chars for debugging
-        }
-      );
-    }
+    return this.parseClaudeJSON(content);
   }
 
   /**

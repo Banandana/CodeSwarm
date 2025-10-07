@@ -108,23 +108,7 @@ class DatabaseAgent extends BaseAgent {
    * @private
    */
   _parseResponse(content) {
-    try {
-      const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) ||
-                       content.match(/```\n([\s\S]*?)\n```/) ||
-                       [null, content];
-
-      const jsonStr = jsonMatch[1] || content;
-      return JSON.parse(jsonStr.trim());
-
-    } catch (error) {
-      throw new AgentError(
-        `Failed to parse Claude response: ${error.message}`,
-        {
-          agentId: this.agentId,
-          content: content.substring(0, 200)
-        }
-      );
-    }
+    return this.parseClaudeJSON(content);
   }
 
   /**

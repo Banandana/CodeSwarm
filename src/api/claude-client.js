@@ -78,8 +78,15 @@ class ClaudeClient {
 
       console.log(`[ClaudeClient] Making API call (model: ${request.model}, max_tokens: ${request.max_tokens})...`);
 
-      // Make API call
-      const response = await this.client.messages.create(request);
+      // Make API call with timeout protection
+      const apiTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Claude API timeout after 60s')), 60000)
+      );
+
+      const response = await Promise.race([
+        this.client.messages.create(request),
+        apiTimeout
+      ]);
 
       console.log(`[ClaudeClient] API call completed in ${Date.now() - startTime}ms`);
 
@@ -210,7 +217,15 @@ class ClaudeClient {
       let inputTokens = 0;
       let outputTokens = 0;
 
-      const stream = await this.client.messages.create(request);
+      // Make API call with timeout protection
+      const apiTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Claude API stream timeout after 60s')), 60000)
+      );
+
+      const stream = await Promise.race([
+        this.client.messages.create(request),
+        apiTimeout
+      ]);
 
       for await (const event of stream) {
         if (event.type === 'content_block_delta') {

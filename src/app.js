@@ -221,6 +221,11 @@ class CodeSwarm {
       this.components.budget
     );
 
+    // Remove any existing listeners to prevent duplicates
+    this.components.hub.removeAllListeners('FILE_READ');
+    this.components.hub.removeAllListeners('FILE_WRITE');
+    this.components.hub.removeAllListeners('CLAUDE_REQUEST');
+
     // Attach file operations handler to hub
     this.components.hub.on('FILE_READ', async (message) => {
       try {
@@ -377,6 +382,12 @@ class CodeSwarm {
   async _cleanup() {
     if (this.components.coordinator) {
       await this.components.coordinator.shutdown();
+    }
+
+    // Cleanup budget reservations
+    if (this.components.budget) {
+      this.components.budget.stopCleanup();
+      await this.components.budget.cleanup();
     }
 
     // Cleanup other components as needed

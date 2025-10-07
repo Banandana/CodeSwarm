@@ -18,7 +18,7 @@ class BaseAgent extends EventEmitter {
 
     this.config = {
       maxConcurrentTasks: options.maxConcurrentTasks || 1,
-      heartbeatInterval: options.heartbeatInterval || 30000, // 30 seconds
+      heartbeatInterval: options.heartbeatInterval || 60000, // 60 seconds (increased to reduce queue pressure)
       taskTimeout: options.taskTimeout || 300000, // 5 minutes
       retryAttempts: options.retryAttempts || 3,
       retryDelay: options.retryDelay || 1000
@@ -156,8 +156,9 @@ class BaseAgent extends EventEmitter {
 
     console.log(`[${this.agentId}] Starting task with ${timeoutMs}ms timeout:`, task.id);
 
+    let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         console.error(`[${this.agentId}] ⏱️ Task timeout after ${timeoutMs}ms:`, {
           taskId: task.id,
           agentType: this.agentType
@@ -175,9 +176,11 @@ class BaseAgent extends EventEmitter {
         timeoutPromise
       ]);
       console.log(`[${this.agentId}] ✓ Task completed:`, task.id);
+      if (timeoutId) clearTimeout(timeoutId);
       return result;
     } catch (error) {
       console.error(`[${this.agentId}] ✗ Task failed:`, task.id, error.message);
+      if (timeoutId) clearTimeout(timeoutId);
       throw error;
     }
   }
@@ -327,6 +330,57 @@ class BaseAgent extends EventEmitter {
       },
       priority: 'HIGH'
     });
+  }
+
+  /**
+   * Parse Claude JSON response (shared utility for all agents)
+   * @param {string} content - Claude response content
+   * @returns {Object} Parsed JSON object
+   * @protected
+   */
+  parseClaudeJSON(content) {
+    try {
+      let jsonStr = content;
+
+      // Try multiple patterns to extract JSON from markdown
+      const patterns = [
+        /```json\s*([\s\S]*?)\s*```/,  // ```json ... ```
+        /```\s*([\s\S]*?)\s*```/,       // ``` ... ```
+        /(\{[\s\S]*\})/                 // Just find the JSON object
+      ];
+
+      for (const pattern of patterns) {
+        const match = content.match(pattern);
+        if (match) {
+          jsonStr = match[1] || match[0];
+
+          // Try to parse this candidate
+          try {
+            return JSON.parse(jsonStr.trim());
+          } catch (e) {
+            // This pattern didn't work, try next
+            continue;
+          }
+        }
+      }
+
+      // If all patterns failed, try the raw content
+      return JSON.parse(content.trim());
+
+    } catch (error) {
+      // Log full response for debugging
+      console.error(`[${this.agentId}] Parse error:`, error.message);
+      console.error(`[${this.agentId}] Response preview:`, content.substring(0, 1000));
+
+      throw new AgentError(
+        `Failed to parse Claude response: ${error.message}`,
+        {
+          agentId: this.agentId,
+          content: content.substring(0, 1000),
+          parseError: error.message
+        }
+      );
+    }
   }
 
   /**

@@ -59,6 +59,14 @@ class MessageProtocol {
       throw new Error(`Invalid message type: ${type}`);
     }
 
+    // Set appropriate timeout based on message type
+    let timeout = 30000; // 30s default
+    if (type === 'CLAUDE_REQUEST') {
+      timeout = 180000; // 3 minutes for Claude API calls (they can take 40-60s+)
+    } else if (type === 'FILE_WRITE' || type === 'FILE_READ') {
+      timeout = 60000; // 1 minute for file operations
+    }
+
     return {
       id: this.generateMessageId(),
       type,
@@ -66,7 +74,7 @@ class MessageProtocol {
       payload: payload || {},
       priority,
       timestamp: Date.now(),
-      timeout: Date.now() + 30000, // 30s default
+      timeout: Date.now() + timeout,
       requiresBudget: this.requiresBudget(type),
       retryCount: 0
     };
