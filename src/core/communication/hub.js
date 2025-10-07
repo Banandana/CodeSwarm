@@ -11,13 +11,14 @@ const { CommunicationError, TimeoutError } = require('../../utils/errors');
 class CommunicationHub extends EventEmitter {
   constructor(stateManager, lockManager, budgetManager, options = {}) {
     super();
+    this.setMaxListeners(100); // Increase from default 10 for high concurrency
 
     this.stateManager = stateManager;
     this.lockManager = lockManager;
     this.budgetManager = budgetManager;
 
     this.options = {
-      maxConcurrentOperations: options.maxConcurrentOperations || 10,
+      maxConcurrentOperations: options.maxConcurrentOperations || 50,
       messageTimeout: options.messageTimeout || 30000,
       retryAttempts: options.retryAttempts || 3,
       maxQueueSize: options.maxQueueSize || 1000, // C6: Prevent queue saturation

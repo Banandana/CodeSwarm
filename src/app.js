@@ -220,7 +220,8 @@ class CodeSwarm {
     this.components.hub = new CommunicationHub(
       this.components.state,
       this.components.locks,
-      this.components.budget
+      this.components.budget,
+      { maxConcurrentOperations: 50 }
     );
 
     // Remove any existing listeners to prevent duplicates
