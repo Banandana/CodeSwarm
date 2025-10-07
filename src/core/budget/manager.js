@@ -112,7 +112,7 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async validateOperation(operationId, estimatedCost, agentId, priority = 'MEDIUM') {
-    // console.log(`[BudgetManager] validateOperation called:`, {
+    console.log(`[BudgetManager] validateOperation called:`, {
       operationId,
       estimatedCost,
       agentId,
@@ -147,7 +147,7 @@ class BudgetManager extends EventEmitter {
 
       // Calculate projected usage (atomic read within mutex)
       const totalProjected = this.usage.total + this.usage.reserved + estimatedCost;
-      // console.debug(`[BudgetManager] Budget calculation:`, {
+      console.debug(`[BudgetManager] Budget calculation:`, {
         operationId,
         currentTotal: this.usage.total,
         currentReserved: this.usage.reserved,
@@ -188,7 +188,7 @@ class BudgetManager extends EventEmitter {
 
       // Reserve check
       const reserveRemaining = this.config.maxBudget - totalProjected;
-      // console.debug(`[BudgetManager] Reserve check:`, {
+      console.debug(`[BudgetManager] Reserve check:`, {
         operationId,
         reserveRemaining,
         minReserve: this.config.minReserve,
@@ -225,7 +225,7 @@ class BudgetManager extends EventEmitter {
         status: 'reserved'
       });
 
-      // console.log(`[BudgetManager] Budget reserved successfully:`, {
+      console.log(`[BudgetManager] Budget reserved successfully:`, {
         operationId,
         estimatedCost,
         newReserved: this.usage.reserved,
@@ -255,7 +255,7 @@ class BudgetManager extends EventEmitter {
       // FIX B4: Removed recordSuccess() from here
       // Circuit breaker success should only be recorded after operation completes (in recordUsage)
 
-      // console.log(`[BudgetManager] validateOperation completed successfully:`, {
+      console.log(`[BudgetManager] validateOperation completed successfully:`, {
         operationId,
         approved: true,
         remaining: this.config.maxBudget - totalProjected,
@@ -301,7 +301,7 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async releaseReservation(operationId) {
-    // console.log(`[BudgetManager] releaseReservation called:`, {
+    console.log(`[BudgetManager] releaseReservation called:`, {
       operationId,
       currentReserved: this.usage.reserved,
       operationExists: this.usage.operations.has(operationId)
@@ -331,7 +331,7 @@ class BudgetManager extends EventEmitter {
     this.usage.reserved -= operation.estimatedCost;
     this.usage.operations.delete(operationId);
 
-    // console.log(`[BudgetManager] Reservation released:`, {
+    console.log(`[BudgetManager] Reservation released:`, {
       operationId,
       releasedAmount: operation.estimatedCost,
       previousReserved,
@@ -362,7 +362,7 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async recordUsage(operationId, actualCost) {
-    // console.log(`[BudgetManager] recordUsage called:`, {
+    console.log(`[BudgetManager] recordUsage called:`, {
       operationId,
       actualCost,
       currentTotal: this.usage.total,
@@ -403,7 +403,7 @@ class BudgetManager extends EventEmitter {
     operation.variance = actualCost - operation.estimatedCost;
     operation.variancePercent = (operation.variance / operation.estimatedCost) * 100;
 
-    // console.log(`[BudgetManager] Budget totals updated:`, {
+    console.log(`[BudgetManager] Budget totals updated:`, {
       operationId,
       previousTotal,
       newTotal: this.usage.total,
@@ -421,7 +421,7 @@ class BudgetManager extends EventEmitter {
       duration: operation.completedAt - operation.timestamp
     });
 
-    // console.debug(`[BudgetManager] Operation added to history:`, {
+    console.debug(`[BudgetManager] Operation added to history:`, {
       operationId,
       historyLength: this.usage.history.length,
       duration: operation.completedAt - operation.timestamp

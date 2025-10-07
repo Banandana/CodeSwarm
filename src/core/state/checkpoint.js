@@ -32,22 +32,30 @@ class CheckpointManager {
     try {
       await this.initialize();
 
+      // Extract task data from orchestration structure if present
+      const taskData = this._extractTaskData(state);
+
+      // Extract execution data if present
+      const executionData = state.execution || {};
+
       const checkpoint = {
         id: `checkpoint_${Date.now()}`,
         timestamp: Date.now(),
         version: '1.0.0',
         state: {
-          currentTask: state.currentTask,
-          completedTasks: state.completedTasks || [],
-          pendingTasks: state.pendingTasks || [],
-          failedTasks: state.failedTasks || [],
+          currentTask: executionData.currentTask || state.currentTask,
+          completedTasks: taskData.completedTasks,
+          pendingTasks: taskData.pendingTasks,
+          failedTasks: taskData.failedTasks,
           budgetUsed: state.budgetUsed || 0,
           budgetRemaining: state.budgetRemaining || 0,
-          filesModified: state.filesModified || [],
-          filesCreated: state.filesCreated || [],
+          filesModified: executionData.filesModified || state.filesModified || [],
+          filesCreated: executionData.filesCreated || state.filesCreated || [],
           agents: state.agents ? state.agents.map(a => this._serializeAgent(a)) : [],
           projectInfo: state.projectInfo || {},
-          config: state.config || {}
+          config: state.config || {},
+          // Preserve full orchestration structure for resume
+          orchestration: state.orchestration || null
         }
       };
 
@@ -153,7 +161,8 @@ class CheckpointManager {
       filesCreated: checkpoint.state.filesCreated,
       agents: checkpoint.state.agents.map(a => this._deserializeAgent(a)),
       projectInfo: checkpoint.state.projectInfo,
-      config: checkpoint.state.config
+      config: checkpoint.state.config,
+      orchestration: checkpoint.state.orchestration || null
     };
   }
 
@@ -201,6 +210,75 @@ class CheckpointManager {
     } catch (error) {
       throw new StateError(`Failed to get checkpoint history: ${error.message}`);
     }
+  }
+
+  /**
+   * Extract task data from orchestration structure
+   * @private
+   * @param {Object} state - State object that may contain orchestration
+   * @returns {Object} Aggregated task data
+   */
+  _extractTaskData(state) {
+    let completedTasks = [];
+    let pendingTasks = [];
+    let failedTasks = [];
+
+    // First check for flat arrays (backward compatibility)
+    if (state.completedTasks && Array.isArray(state.completedTasks)) {
+      completedTasks = [...state.completedTasks];
+    }
+    if (state.pendingTasks && Array.isArray(state.pendingTasks)) {
+      pendingTasks = [...state.pendingTasks];
+    }
+    if (state.failedTasks && Array.isArray(state.failedTasks)) {
+      failedTasks = [...state.failedTasks];
+    }
+
+    // Extract from orchestration structure if present
+    if (state.orchestration) {
+      const orch = state.orchestration;
+
+      // Main coordinator tasks
+      if (orch.completedTasks && Array.isArray(orch.completedTasks)) {
+        completedTasks.push(...orch.completedTasks);
+      }
+      if (orch.taskQueue && Array.isArray(orch.taskQueue)) {
+        pendingTasks.push(...orch.taskQueue);
+      }
+      if (orch.failedTasks && Array.isArray(orch.failedTasks)) {
+        failedTasks.push(...orch.failedTasks);
+      }
+
+      // Feature coordinator tasks (hierarchical structure)
+      if (orch.featureCoordinators && Array.isArray(orch.featureCoordinators)) {
+        for (const fc of orch.featureCoordinators) {
+          if (fc.coordinatorState && fc.coordinatorState.orchestration) {
+            const fcOrch = fc.coordinatorState.orchestration;
+
+            if (fcOrch.completedTasks && Array.isArray(fcOrch.completedTasks)) {
+              completedTasks.push(...fcOrch.completedTasks);
+            }
+            if (fcOrch.taskQueue && Array.isArray(fcOrch.taskQueue)) {
+              pendingTasks.push(...fcOrch.taskQueue);
+            }
+            if (fcOrch.failedTasks && Array.isArray(fcOrch.failedTasks)) {
+              failedTasks.push(...fcOrch.failedTasks);
+            }
+          }
+        }
+      }
+    }
+
+    // Remove duplicates (tasks might be referenced in multiple places)
+    completedTasks = [...new Set(completedTasks)];
+    pendingTasks = [...new Set(pendingTasks)];
+    failedTasks = [...new Set(failedTasks)];
+
+    return {
+      completedTasks,
+      pendingTasks,
+      failedTasks
+    };
   }
 
   /**
