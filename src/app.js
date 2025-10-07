@@ -14,6 +14,7 @@ const StateManager = require('./core/state/manager');
 const DistributedLockManager = require('./core/locking/distributed-lock');
 const CommunicationHub = require('./core/communication/hub');
 const CheckpointManager = require('./core/state/checkpoint');
+const { initializeLogger, closeLogger } = require('./core/logging/logger');
 
 // File system
 const FileSystemOperations = require('./filesystem/operations');
@@ -59,6 +60,7 @@ class CodeSwarm {
 
     this.components = {};
     this.progressDisplay = null;
+    this.logger = null;
     this.eventListeners = []; // Track all event listeners for cleanup
   }
 
@@ -71,6 +73,14 @@ class CodeSwarm {
    */
   async generate(proposal, outputDir, options = {}) {
     try {
+      // Initialize logger first
+      this.logger = await initializeLogger(outputDir);
+      this.logger.info('Starting code generation', {
+        proposalLength: proposal.length,
+        outputDir,
+        budget: options.budget || this.config.budgetLimit
+      });
+
       // Initialize components
       await this._initialize(outputDir, options);
 
@@ -79,6 +89,11 @@ class CodeSwarm {
       this.progressDisplay.start({
         name: parsed.title,
         description: parsed.description
+      });
+
+      this.logger.info('Proposal parsed', {
+        title: parsed.title,
+        featuresCount: parsed.features.length
       });
 
       // Create backup
@@ -124,9 +139,21 @@ class CodeSwarm {
         securityIssues: scanResults.issuesFound
       });
 
+      this.logger.info('Code generation completed', {
+        filesCreated: result.filesCreated?.length || 0,
+        tasksCompleted: result.tasksCompleted,
+        securityIssues: scanResults.issuesFound
+      });
+
       return result;
 
     } catch (error) {
+      if (this.logger) {
+        this.logger.error('Code generation failed', {
+          error: error.message,
+          stack: error.stack
+        });
+      }
       this.progressDisplay.error(error.message);
       throw error;
     } finally {
@@ -142,6 +169,10 @@ class CodeSwarm {
    */
   async resume(outputDir, options = {}) {
     try {
+      // Initialize logger first
+      this.logger = await initializeLogger(outputDir);
+      this.logger.info('Resuming code generation from checkpoint', { outputDir });
+
       // Initialize components
       await this._initialize(outputDir, options);
 
@@ -194,12 +225,14 @@ class CodeSwarm {
     this.components.budget = new BudgetManager({
       maxBudget: options.budget || this.config.budgetLimit,
       minReserve: parseFloat(process.env.MIN_BUDGET_RESERVE) || 1.0,
-      warningThreshold: 0.9
+      warningThreshold: 0.9,
+      logger: this.logger
     });
 
     // State manager
     this.components.state = new StateManager(
-      path.join(outputDir, '.codeswarm')
+      path.join(outputDir, '.codeswarm'),
+      { logger: this.logger }
     );
 
     await this.components.state.initialize();
@@ -213,7 +246,8 @@ class CodeSwarm {
     // Claude API client
     this.components.claude = new ClaudeClient(this.components.budget, {
       apiKey: this.config.apiKey,
-      model: this.config.model
+      model: this.config.model,
+      logger: this.logger
     });
 
     // Communication hub
@@ -221,7 +255,10 @@ class CodeSwarm {
       this.components.state,
       this.components.locks,
       this.components.budget,
-      { maxConcurrentOperations: 50 }
+      {
+        maxConcurrentOperations: 50,
+        logger: this.logger
+      }
     );
 
     // Remove any existing listeners to prevent duplicates
@@ -289,7 +326,8 @@ class CodeSwarm {
       'coordinator-main',
       this.components.hub,
       {
-        maxConcurrentTasks: this.config.maxConcurrentAgents
+        maxConcurrentTasks: this.config.maxConcurrentAgents,
+        logger: this.logger
       }
     );
 
@@ -439,6 +477,13 @@ class CodeSwarm {
     if (this.components.budget) {
       this.components.budget.stopCleanup();
       await this.components.budget.cleanup();
+    }
+
+    // Close logger last
+    if (this.logger) {
+      this.logger.info('Shutting down logger');
+      await closeLogger();
+      this.logger = null;
     }
 
     // Clear component references

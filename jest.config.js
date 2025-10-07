@@ -26,7 +26,7 @@ module.exports = {
   ],
 
   // Coverage thresholds
-  coverageThresholds: {
+  coverageThreshold: {
     global: {
       branches: 80,
       functions: 85,
@@ -80,9 +80,9 @@ module.exports = {
     '/.codeswarm/'
   ],
 
-  // Watch plugins
-  watchPlugins: [
-    'jest-watch-typeahead/filename',
-    'jest-watch-typeahead/testname'
-  ]
+  // Watch plugins (commented out - install jest-watch-typeahead if needed)
+  // watchPlugins: [
+  //   'jest-watch-typeahead/filename',
+  //   'jest-watch-typeahead/testname'
+  // ]
 };
