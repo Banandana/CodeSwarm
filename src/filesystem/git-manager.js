@@ -68,6 +68,24 @@ class GitManager {
    */
   async commitTask(task, files) {
     try {
+      // SECURITY: Validate .gitignore before committing
+      await this._validateGitignore();
+
+      // SECURITY: Check for sensitive data in files being committed
+      if (files && files.length > 0) {
+        const sensitiveFiles = this._detectSensitiveFiles(files);
+        if (sensitiveFiles.length > 0) {
+          throw new FileSystemError(
+            `Security: Attempting to commit sensitive files: ${sensitiveFiles.join(', ')}. ` +
+            'Please add these patterns to .gitignore.',
+            {
+              sensitiveFiles,
+              securityIssue: 'sensitive_data_detected'
+            }
+          );
+        }
+      }
+
       // Add files
       if (files && files.length > 0) {
         await this.git.add(files);
@@ -269,7 +287,19 @@ __pycache__/
 # Environment
 .env
 .env.local
+.env.*
 *.local
+
+# Secrets and credentials
+*secret*
+*password*
+*token*
+*api_key*
+*apikey*
+credentials.json
+*.pem
+*.key
+*.cert
 
 # Build
 dist/
@@ -295,6 +325,69 @@ logs/
 `;
 
     await fs.writeFile(gitignorePath, defaultGitignore, 'utf-8');
+  }
+
+  /**
+   * Validate .gitignore has essential security patterns
+   * @private
+   */
+  async _validateGitignore() {
+    const gitignorePath = path.join(this.outputDir, '.gitignore');
+
+    if (!await fs.pathExists(gitignorePath)) {
+      // Create default gitignore if missing
+      await this._createGitignore();
+      return;
+    }
+
+    const gitignoreContent = await fs.readFile(gitignorePath, 'utf-8');
+
+    // Critical patterns that must be in .gitignore
+    const criticalPatterns = [
+      { pattern: /\.env/i, name: '.env files' },
+      { pattern: /node_modules/i, name: 'node_modules' },
+      { pattern: /\*\.log/i, name: 'log files' }
+    ];
+
+    const missingPatterns = criticalPatterns.filter(
+      p => !p.pattern.test(gitignoreContent)
+    );
+
+    if (missingPatterns.length > 0) {
+      console.warn(
+        '[GitManager] Warning: .gitignore missing critical patterns:',
+        missingPatterns.map(p => p.name).join(', ')
+      );
+    }
+  }
+
+  /**
+   * Detect sensitive files that shouldn't be committed
+   * @private
+   */
+  _detectSensitiveFiles(files) {
+    const sensitivePatterns = [
+      /\.env$/i,
+      /\.env\./i,
+      /secret/i,
+      /password/i,
+      /token/i,
+      /api[_-]?key/i,
+      /credentials\.json$/i,
+      /\.pem$/i,
+      /\.key$/i,
+      /\.cert$/i,
+      /private[_-]?key/i,
+      /id_rsa/i,
+      /\.ssh\//i,
+      /aws[_-]?credentials/i,
+      /\.npmrc$/i,
+      /\.pypirc$/i
+    ];
+
+    return files.filter(file => {
+      return sensitivePatterns.some(pattern => pattern.test(file));
+    });
   }
 }
 

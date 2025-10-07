@@ -136,8 +136,8 @@ class TaskExecutor extends EventEmitter {
    * @private
    */
   async _executeWithCheckpointing(plan) {
-    // Listen for task completion to create checkpoints
-    this.coordinator.on('taskCompleted', async (event) => {
+    // Define handler functions for cleanup
+    const taskCompletedHandler = async (event) => {
       this.execution.completedTasks.push(event.taskId);
 
       // Checkpoint after each task
@@ -159,9 +159,9 @@ class TaskExecutor extends EventEmitter {
         percentage: totalTasks > 0 ? (this.execution.completedTasks.length / totalTasks) * 100 : 0,
         timestamp: Date.now()
       });
-    });
+    };
 
-    this.coordinator.on('taskFailed', async (event) => {
+    const taskFailedHandler = async (event) => {
       this.execution.failedTasks.push({
         taskId: event.taskId,
         error: event.error
@@ -178,12 +178,21 @@ class TaskExecutor extends EventEmitter {
         error: event.error,
         timestamp: Date.now()
       });
-    });
+    };
 
-    // Execute the plan
-    const result = await this.coordinator.executePlan();
+    // Attach listeners
+    this.coordinator.on('taskCompleted', taskCompletedHandler);
+    this.coordinator.on('taskFailed', taskFailedHandler);
 
-    return result;
+    try {
+      // Execute the plan
+      const result = await this.coordinator.executePlan();
+      return result;
+    } finally {
+      // Remove listeners after execution completes
+      this.coordinator.removeListener('taskCompleted', taskCompletedHandler);
+      this.coordinator.removeListener('taskFailed', taskFailedHandler);
+    }
   }
 
   /**

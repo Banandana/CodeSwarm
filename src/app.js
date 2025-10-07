@@ -59,6 +59,7 @@ class CodeSwarm {
 
     this.components = {};
     this.progressDisplay = null;
+    this.eventListeners = []; // Track all event listeners for cleanup
   }
 
   /**
@@ -227,16 +228,16 @@ class CodeSwarm {
     this.components.hub.removeAllListeners('CLAUDE_REQUEST');
 
     // Attach file operations handler to hub
-    this.components.hub.on('FILE_READ', async (message) => {
+    const fileReadHandler = async (message) => {
       try {
         const content = await this.components.fileOps.readFile(message.payload.filePath);
         this.components.hub.emit(`FILE_READ_RESPONSE_${message.id}`, { content });
       } catch (error) {
         this.components.hub.emit(`FILE_READ_ERROR_${message.id}`, error);
       }
-    });
+    };
 
-    this.components.hub.on('FILE_WRITE', async (message) => {
+    const fileWriteHandler = async (message) => {
       try {
         const result = await this.components.fileOps.writeFile(
           message.payload.filePath,
@@ -247,9 +248,9 @@ class CodeSwarm {
       } catch (error) {
         this.components.hub.emit(`FILE_WRITE_ERROR_${message.id}`, error);
       }
-    });
+    };
 
-    this.components.hub.on('CLAUDE_REQUEST', async (message) => {
+    const claudeRequestHandler = async (message) => {
       try {
         // Pass message.id as operationId to avoid double validation
         const options = {
@@ -268,7 +269,18 @@ class CodeSwarm {
         // Emit error event that the hub is waiting for
         this.components.hub.emit(`CLAUDE_ERROR_${message.id}`, error);
       }
-    });
+    };
+
+    this.components.hub.on('FILE_READ', fileReadHandler);
+    this.components.hub.on('FILE_WRITE', fileWriteHandler);
+    this.components.hub.on('CLAUDE_REQUEST', claudeRequestHandler);
+
+    // Track listeners for cleanup
+    this.eventListeners.push(
+      { emitter: this.components.hub, event: 'FILE_READ', handler: fileReadHandler },
+      { emitter: this.components.hub, event: 'FILE_WRITE', handler: fileWriteHandler },
+      { emitter: this.components.hub, event: 'CLAUDE_REQUEST', handler: claudeRequestHandler }
+    );
 
     // Checkpoint manager
     this.components.checkpointManager = new CheckpointManager(
@@ -322,57 +334,77 @@ class CodeSwarm {
    * @private
    */
   _wireEventHandlers() {
-    // Executor events
-    this.components.executor.on('phaseStarted', (event) => {
+    // Define handler functions
+    const phaseStartedHandler = (event) => {
       this.progressDisplay.phase(event.phase, event.result);
-    });
+    };
 
-    this.components.executor.on('progress', (event) => {
+    const progressHandler = (event) => {
       this.progressDisplay.progress(event);
-    });
+    };
 
-    this.components.executor.on('checkpointCreated', (event) => {
+    const checkpointCreatedHandler = (event) => {
       this.progressDisplay.checkpoint(event.type);
-    });
+    };
 
-    // Coordinator events
-    this.components.coordinator.on('taskAssigned', (event) => {
+    const taskAssignedHandler = (event) => {
       this.progressDisplay.taskStart({
         id: event.taskId,
         name: event.taskId,
         agentType: event.agentType
       });
-    });
+    };
 
-    this.components.coordinator.on('taskCompleted', (event) => {
+    const taskCompletedHandler = (event) => {
       this.progressDisplay.taskComplete(
         { id: event.taskId, agentType: event.agentType },
         {}
       );
-    });
+    };
 
-    this.components.coordinator.on('taskFailed', (event) => {
+    const taskFailedHandler = (event) => {
       this.progressDisplay.taskFail(
         { id: event.taskId, agentType: event.agentType },
         event.error
       );
-    });
+    };
 
-    this.components.coordinator.on('budgetWarning', (event) => {
+    const budgetWarningCoordHandler = (event) => {
       this.progressDisplay.budgetUpdate({
         total: event.totalCost + event.remaining,
         used: event.totalCost,
         remaining: event.remaining
       });
-    });
+    };
 
-    // Budget events
-    this.components.budget.on('budgetWarning', (event) => {
+    const budgetWarningHandler = (event) => {
       this.progressDisplay.warning(
         `Budget at ${event.utilizationPercent.toFixed(1)}% ` +
         `($${event.totalCost.toFixed(2)} / $${event.maxBudget.toFixed(2)})`
       );
-    });
+    };
+
+    // Attach handlers
+    this.components.executor.on('phaseStarted', phaseStartedHandler);
+    this.components.executor.on('progress', progressHandler);
+    this.components.executor.on('checkpointCreated', checkpointCreatedHandler);
+    this.components.coordinator.on('taskAssigned', taskAssignedHandler);
+    this.components.coordinator.on('taskCompleted', taskCompletedHandler);
+    this.components.coordinator.on('taskFailed', taskFailedHandler);
+    this.components.coordinator.on('budgetWarning', budgetWarningCoordHandler);
+    this.components.budget.on('budgetWarning', budgetWarningHandler);
+
+    // Track all listeners for cleanup
+    this.eventListeners.push(
+      { emitter: this.components.executor, event: 'phaseStarted', handler: phaseStartedHandler },
+      { emitter: this.components.executor, event: 'progress', handler: progressHandler },
+      { emitter: this.components.executor, event: 'checkpointCreated', handler: checkpointCreatedHandler },
+      { emitter: this.components.coordinator, event: 'taskAssigned', handler: taskAssignedHandler },
+      { emitter: this.components.coordinator, event: 'taskCompleted', handler: taskCompletedHandler },
+      { emitter: this.components.coordinator, event: 'taskFailed', handler: taskFailedHandler },
+      { emitter: this.components.coordinator, event: 'budgetWarning', handler: budgetWarningCoordHandler },
+      { emitter: this.components.budget, event: 'budgetWarning', handler: budgetWarningHandler }
+    );
   }
 
   /**
@@ -380,8 +412,30 @@ class CodeSwarm {
    * @private
    */
   async _cleanup() {
+    // Remove all event listeners
+    for (const { emitter, event, handler } of this.eventListeners) {
+      emitter.removeListener(event, handler);
+    }
+    this.eventListeners = [];
+
+    // Shutdown coordinator and all its agents
     if (this.components.coordinator) {
       await this.components.coordinator.shutdown();
+    }
+
+    // Shutdown communication hub
+    if (this.components.hub) {
+      await this.components.hub.shutdown();
+    }
+
+    // Cleanup state manager
+    if (this.components.state) {
+      await this.components.state.cleanup();
+    }
+
+    // Cleanup lock manager
+    if (this.components.locks) {
+      await this.components.locks.cleanup();
     }
 
     // Cleanup budget reservations
@@ -390,7 +444,8 @@ class CodeSwarm {
       await this.components.budget.cleanup();
     }
 
-    // Cleanup other components as needed
+    // Clear component references
+    this.components = {};
   }
 
   /**

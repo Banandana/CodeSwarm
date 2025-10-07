@@ -14,10 +14,33 @@ class CircuitBreaker {
     this.successCount = 0;
     this.lastFailureTime = null;
     this.nextAttemptTime = null;
+
+    // FIX B5: State transition queue to prevent race conditions
+    // Ensures state transitions are serialized
+    this.stateTransitionMutex = Promise.resolve();
+  }
+
+  /**
+   * Acquire mutex for state transitions (FIX B5: Circuit Breaker State Race)
+   * @private
+   * @returns {Promise<Function>} unlock function
+   */
+  async _acquireStateMutex() {
+    let unlock;
+    const nextMutex = new Promise(resolve => {
+      unlock = resolve;
+    });
+
+    const currentMutex = this.stateTransitionMutex;
+    this.stateTransitionMutex = nextMutex;
+
+    await currentMutex;
+    return unlock;
   }
 
   /**
    * Check if operation can proceed
+   * Note: This method is synchronous for performance, but state transitions are serialized
    * @returns {boolean}
    */
   canExecute() {
@@ -29,9 +52,8 @@ class CircuitBreaker {
       const now = Date.now();
 
       // Check if enough time has passed to try again
+      // Note: Actual state transition to HALF_OPEN happens in recordSuccess/recordFailure
       if (now >= this.nextAttemptTime) {
-        this.state = 'HALF_OPEN';
-        this.successCount = 0;
         return true;
       }
 
@@ -44,40 +66,63 @@ class CircuitBreaker {
 
   /**
    * Record successful operation
+   * FIX B5: Now uses mutex to serialize state transitions
    */
-  recordSuccess() {
-    this.failureCount = 0;
+  async recordSuccess() {
+    const unlock = await this._acquireStateMutex();
 
-    if (this.state === 'HALF_OPEN') {
-      this.successCount++;
+    try {
+      this.failureCount = 0;
 
-      if (this.successCount >= this.successThreshold) {
+      // Handle state transitions based on current state
+      if (this.state === 'OPEN') {
+        // If we're OPEN but can execute (past timeout), transition to HALF_OPEN
+        const now = Date.now();
+        if (now >= this.nextAttemptTime) {
+          this.state = 'HALF_OPEN';
+          this.successCount = 1;
+        }
+      } else if (this.state === 'HALF_OPEN') {
+        this.successCount++;
+
+        if (this.successCount >= this.successThreshold) {
+          this.state = 'CLOSED';
+          this.successCount = 0;
+        }
+      } else {
+        // Already CLOSED, stay CLOSED
         this.state = 'CLOSED';
-        this.successCount = 0;
       }
-    } else {
-      this.state = 'CLOSED';
+    } finally {
+      unlock();
     }
   }
 
   /**
    * Record failed operation
+   * FIX B5: Now uses mutex to serialize state transitions
    */
-  recordFailure() {
-    this.failureCount++;
-    this.lastFailureTime = Date.now();
+  async recordFailure() {
+    const unlock = await this._acquireStateMutex();
 
-    if (this.state === 'HALF_OPEN') {
-      // Failed while testing - go back to OPEN
-      this.state = 'OPEN';
-      this.nextAttemptTime = this.lastFailureTime + this.resetTimeout;
-      this.successCount = 0;
-      return;
-    }
+    try {
+      this.failureCount++;
+      this.lastFailureTime = Date.now();
 
-    if (this.failureCount >= this.failureThreshold) {
-      this.state = 'OPEN';
-      this.nextAttemptTime = this.lastFailureTime + this.resetTimeout;
+      if (this.state === 'HALF_OPEN') {
+        // Failed while testing - go back to OPEN
+        this.state = 'OPEN';
+        this.nextAttemptTime = this.lastFailureTime + this.resetTimeout;
+        this.successCount = 0;
+        return;
+      }
+
+      if (this.failureCount >= this.failureThreshold) {
+        this.state = 'OPEN';
+        this.nextAttemptTime = this.lastFailureTime + this.resetTimeout;
+      }
+    } finally {
+      unlock();
     }
   }
 

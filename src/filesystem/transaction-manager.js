@@ -24,6 +24,14 @@ class TransactionManager extends EventEmitter {
   beginTransaction(transactionId = null) {
     const txId = transactionId || uuidv4();
 
+    // F4: Detect nested transactions
+    if (this.transactions.has(txId)) {
+      throw new FileSystemError(
+        `Transaction ${txId} already exists - nested transactions not supported`,
+        { transactionId: txId }
+      );
+    }
+
     this.transactions.set(txId, {
       id: txId,
       status: 'ACTIVE',
@@ -158,6 +166,19 @@ class TransactionManager extends EventEmitter {
       // Restore all backed up files
       for (const [filePath, backup] of tx.backups) {
         try {
+          // F6: Verify lock before rollback if lockManager exists
+          if (this.fileOps.lockManager) {
+            const lockInfo = await this.fileOps.lockManager.getLockInfo(filePath);
+            if (lockInfo && lockInfo.locked) {
+              this.emit('warning', {
+                message: `File ${filePath} is locked during rollback - may cause conflicts`,
+                transactionId,
+                filePath,
+                lockInfo
+              });
+            }
+          }
+
           const fullPath = path.join(this.fileOps.outputDir, filePath);
           await fs.writeFile(fullPath, backup.content, 'utf-8');
           restoredFiles.push(filePath);
@@ -175,6 +196,22 @@ class TransactionManager extends EventEmitter {
           try {
             const fullPath = path.join(this.fileOps.outputDir, op.filePath);
             if (await fs.pathExists(fullPath)) {
+              // F5: Check if file was modified since creation before deleting
+              const currentContent = await fs.readFile(fullPath, 'utf-8');
+              const stats = await fs.stat(fullPath);
+              const opTimestamp = op.timestamp || Date.now();
+
+              // Warn if file was modified after operation
+              if (stats.mtime.getTime() > opTimestamp + 1000) { // 1 second grace period
+                this.emit('warning', {
+                  message: `File ${op.filePath} was modified after creation - deleting anyway`,
+                  transactionId,
+                  filePath: op.filePath,
+                  opTime: new Date(opTimestamp),
+                  modTime: stats.mtime
+                });
+              }
+
               await fs.unlink(fullPath);
               restoredFiles.push(op.filePath);
             }
@@ -211,6 +248,15 @@ class TransactionManager extends EventEmitter {
 
     } catch (error) {
       tx.status = 'ROLLBACK_FAILED';
+
+      // Better error handling in rollback
+      this.emit('error', {
+        message: `Transaction rollback failed for ${transactionId}`,
+        transactionId,
+        error: error.message,
+        stack: error.stack
+      });
+
       throw new FileSystemError(
         `Failed to rollback transaction ${transactionId}: ${error.message}`,
         { transactionId, error: error.message }

@@ -20,6 +20,7 @@ class CommunicationHub extends EventEmitter {
       maxConcurrentOperations: options.maxConcurrentOperations || 10,
       messageTimeout: options.messageTimeout || 30000,
       retryAttempts: options.retryAttempts || 3,
+      maxQueueSize: options.maxQueueSize || 1000, // C6: Prevent queue saturation
       ...options
     };
 
@@ -29,8 +30,9 @@ class CommunicationHub extends EventEmitter {
     this.pendingResponses = new Map();
     this.processing = false;
 
-    // Subscriptions
-    this.subscriptions = new Map();
+    // Subscriptions - C4: Track subscriptions by agent for cleanup
+    this.subscriptions = new Map(); // subscriptionId -> subscription
+    this.agentSubscriptions = new Map(); // agentId -> Set<subscriptionId>
 
     // Statistics
     this.stats = {
@@ -95,7 +97,8 @@ class CommunicationHub extends EventEmitter {
     const startTime = Date.now();
 
     try {
-      const value = await this.stateManager.read(key, message.agentId);
+      // C5: Pass consistency parameter to StateManager.read()
+      const value = await this.stateManager.read(key, message.agentId, consistency);
 
       this.emit('operationComplete', {
         type: 'READ',
@@ -219,6 +222,12 @@ class CommunicationHub extends EventEmitter {
         pattern,
         callbackId
       });
+
+      // C4: Track subscription by agent for cleanup
+      if (!this.agentSubscriptions.has(message.agentId)) {
+        this.agentSubscriptions.set(message.agentId, new Set());
+      }
+      this.agentSubscriptions.get(message.agentId).add(subscriptionId);
 
       return { success: true, subscriptionId };
     } catch (error) {
@@ -459,7 +468,13 @@ class CommunicationHub extends EventEmitter {
       await this.stateManager.unsubscribe(subscriptionId);
 
       // Remove from subscriptions map
+      const subscription = this.subscriptions.get(subscriptionId);
       this.subscriptions.delete(subscriptionId);
+
+      // C4: Remove from agent subscription tracking
+      if (subscription && this.agentSubscriptions.has(subscription.agentId)) {
+        this.agentSubscriptions.get(subscription.agentId).delete(subscriptionId);
+      }
 
       return { success: true, subscriptionId };
     } catch (error) {
@@ -559,10 +574,11 @@ class CommunicationHub extends EventEmitter {
         break;
       }
 
-      // Check timeout
+      // C3: Check timeout - ensure not already handled
       if (Date.now() > message.timeout) {
         const pending = this.pendingResponses.get(message.id);
-        if (pending) {
+        if (pending && !pending.handled) {
+          pending.handled = true; // Mark as handled to prevent double timeout
           pending.reject(new TimeoutError(`Message ${message.id} timed out`));
           this.pendingResponses.delete(message.id);
         }
@@ -688,7 +704,8 @@ class CommunicationHub extends EventEmitter {
 
       // Resolve pending promise
       const pending = this.pendingResponses.get(message.id);
-      if (pending) {
+      if (pending && !pending.handled) {
+        pending.handled = true; // C3: Mark as handled
         pending.resolve(result);
         this.pendingResponses.delete(message.id);
       }
@@ -704,11 +721,20 @@ class CommunicationHub extends EventEmitter {
       // Retry if possible
       if (MessageProtocol.canRetry(message, this.options.retryAttempts)) {
         const retryMessage = MessageProtocol.createRetryMessage(message);
+
+        // C1: Transfer pendingResponses to new message ID on retry
+        const oldPending = this.pendingResponses.get(message.id);
+        if (oldPending && !oldPending.handled) {
+          this.pendingResponses.set(retryMessage.id, oldPending);
+          this.pendingResponses.delete(message.id); // Cleanup old message ID
+        }
+
         this.messageQueue.unshift(retryMessage);
       } else {
         // Reject pending promise
         const pending = this.pendingResponses.get(message.id);
-        if (pending) {
+        if (pending && !pending.handled) {
+          pending.handled = true; // C3: Mark as handled
           pending.reject(error);
           this.pendingResponses.delete(message.id);
         }
@@ -724,9 +750,22 @@ class CommunicationHub extends EventEmitter {
    */
   async _enqueueMessage(message) {
     return new Promise((resolve, reject) => {
+      // C6: Check queue saturation
+      if (this.messageQueue.length >= this.options.maxQueueSize) {
+        reject(new CommunicationError(
+          `Message queue full (${this.messageQueue.length}/${this.options.maxQueueSize}). System is saturated.`,
+          { messageId: message.id, agentId: message.agentId }
+        ));
+        return;
+      }
+
       const timeoutId = setTimeout(() => {
-        this.pendingResponses.delete(message.id);
-        reject(new TimeoutError(`Message ${message.id} timed out in queue`));
+        const pending = this.pendingResponses.get(message.id);
+        if (pending && !pending.handled) {
+          pending.handled = true; // C3: Mark as handled
+          this.pendingResponses.delete(message.id);
+          reject(new TimeoutError(`Message ${message.id} timed out in queue`));
+        }
       }, message.timeout - Date.now());
 
       this.pendingResponses.set(message.id, {
@@ -737,7 +776,9 @@ class CommunicationHub extends EventEmitter {
         reject: (error) => {
           clearTimeout(timeoutId);
           reject(error);
-        }
+        },
+        handled: false, // C3: Track if already handled
+        timeoutId: timeoutId
       });
 
       this.messageQueue.push(message);
@@ -789,6 +830,33 @@ class CommunicationHub extends EventEmitter {
   }
 
   /**
+   * C4: Cleanup agent subscriptions on disconnect
+   * @param {string} agentId
+   */
+  async cleanupAgent(agentId) {
+    // Cleanup all subscriptions for this agent
+    const agentSubs = this.agentSubscriptions.get(agentId);
+    if (agentSubs) {
+      for (const subscriptionId of agentSubs) {
+        try {
+          await this.stateManager.unsubscribe(subscriptionId);
+          this.subscriptions.delete(subscriptionId);
+        } catch (error) {
+          // Log but don't fail
+          this.emit('cleanupError', {
+            agentId,
+            subscriptionId,
+            error: error.message
+          });
+        }
+      }
+      this.agentSubscriptions.delete(agentId);
+    }
+
+    this.emit('agentCleaned', { agentId });
+  }
+
+  /**
    * Graceful shutdown
    */
   async shutdown() {
@@ -802,6 +870,11 @@ class CommunicationHub extends EventEmitter {
 
     while (this.activeOperations.size > 0 && (Date.now() - start) < maxWait) {
       await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // C4: Cleanup all agent subscriptions
+    for (const agentId of this.agentSubscriptions.keys()) {
+      await this.cleanupAgent(agentId);
     }
 
     this.emit('shutdown');

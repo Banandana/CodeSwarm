@@ -63,7 +63,8 @@ class StateManager extends EventEmitter {
         consistency,
         timestamp: Date.now(),
         resolve,
-        reject: () => {} // Reads don't fail
+        reject: () => {}, // Reads don't fail
+        retryCount: 0 // C2: Track retry count to prevent infinite loop
       });
 
       this._processQueue();
@@ -245,6 +246,23 @@ class StateManager extends EventEmitter {
     if (type === 'READ') {
       // Strong consistency: wait for all pending writes to complete
       if (consistency === 'strong' && this.operationQueue.some(op => op.type === 'WRITE' && op.key === key)) {
+        // C2: Add max retry count to prevent infinite loop
+        const maxRetries = 10;
+        operation.retryCount = (operation.retryCount || 0) + 1;
+
+        if (operation.retryCount > maxRetries) {
+          // Fallback to eventual consistency after max retries
+          this.emit('consistencyFallback', {
+            key,
+            agentId,
+            retryCount: operation.retryCount,
+            message: 'Strong consistency failed after max retries, falling back to eventual'
+          });
+          const stateEntry = this.state.get(key);
+          resolve(stateEntry ? stateEntry.value : null);
+          return;
+        }
+
         // Re-queue this read operation to execute after writes
         this.operationQueue.push(operation);
         return;
@@ -301,20 +319,27 @@ class StateManager extends EventEmitter {
 
       if (matches) {
         for (const [subscriptionId, subscription] of subscribers.entries()) {
-          try {
-            // Don't notify the agent that made the change
-            if (subscription.agentId !== agentId) {
-              setImmediate(() => {
+          // Don't notify the agent that made the change
+          if (subscription.agentId !== agentId) {
+            // C7: Wrap callback in try-catch inside setImmediate
+            setImmediate(() => {
+              try {
                 subscription.callback({
                   key,
                   value,
                   changedBy: agentId,
                   timestamp: Date.now()
                 });
-              });
-            }
-          } catch (error) {
-            this.emit('subscriptionError', { subscriptionId, error: error.message });
+              } catch (error) {
+                this.emit('subscriptionError', {
+                  subscriptionId,
+                  key,
+                  agentId: subscription.agentId,
+                  error: error.message,
+                  stack: error.stack
+                });
+              }
+            });
           }
         }
       }
@@ -362,6 +387,37 @@ class StateManager extends EventEmitter {
       projectInfo: {},
       config: {}
     };
+  }
+
+  /**
+   * Cleanup resources and prepare for shutdown
+   */
+  async cleanup() {
+    console.log('[StateManager] Cleaning up resources...');
+
+    // Process remaining operations with timeout
+    const startTime = Date.now();
+    const maxWait = 5000; // 5 seconds
+
+    while (this.operationQueue.length > 0 && (Date.now() - startTime) < maxWait) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    if (this.operationQueue.length > 0) {
+      console.warn(`[StateManager] ${this.operationQueue.length} operations still pending after cleanup timeout`);
+    }
+
+    // Clear all subscribers
+    const subscriberCount = Array.from(this.subscribers.values()).reduce((sum, s) => sum + s.size, 0);
+    this.subscribers.clear();
+
+    console.log(`[StateManager] Cleanup complete: ${subscriberCount} subscribers removed`);
+
+    this.emit('cleaned', {
+      pendingOperations: this.operationQueue.length,
+      subscribersRemoved: subscriberCount,
+      timestamp: Date.now()
+    });
   }
 }
 

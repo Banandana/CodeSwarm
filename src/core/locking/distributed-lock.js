@@ -69,6 +69,8 @@ class DistributedLockManager extends EventEmitter {
 
         // Lock is held, check if we've timed out
         if (Date.now() >= expiresAt) {
+          // FIX B6: Mark as cancelled before removing from queue
+          this._markAsCancelled(resourceId, lockId);
           this._removeFromQueue(resourceId, lockId);
           this.deadlockDetector.waitForGraph.get(agentId)?.delete(resourceId);
 
@@ -89,7 +91,8 @@ class DistributedLockManager extends EventEmitter {
           agentId,
           expiresAt,
           resolve,
-          reject
+          reject,
+          cancelled: false  // FIX B6: Track cancellation state
         });
 
         // Record wait edge for deadlock detection
@@ -208,6 +211,7 @@ class DistributedLockManager extends EventEmitter {
 
   /**
    * Process lock queue for resource
+   * FIX B6: Now checks for cancellation before granting lock
    * @private
    */
   async _processQueue(resourceId) {
@@ -219,6 +223,13 @@ class DistributedLockManager extends EventEmitter {
 
     // Get next waiter
     const waiter = queue.shift();
+
+    // FIX B6: Check if request was cancelled (important to check before expiration)
+    if (waiter.cancelled) {
+      // Skip cancelled requests and try next waiter
+      await this._processQueue(resourceId);
+      return;
+    }
 
     // Check if request has expired
     if (Date.now() >= waiter.expiresAt) {
@@ -239,6 +250,24 @@ class DistributedLockManager extends EventEmitter {
     // Clean up empty queue
     if (queue.length === 0) {
       this.lockQueue.delete(resourceId);
+    }
+  }
+
+  /**
+   * Mark a lock request as cancelled (FIX B6: Lock Leak on Timeout)
+   * This prevents cancelled requests from being granted locks later
+   * @private
+   */
+  _markAsCancelled(resourceId, lockId) {
+    const queue = this.lockQueue.get(resourceId);
+
+    if (!queue) {
+      return;
+    }
+
+    const waiter = queue.find(w => w.lockId === lockId);
+    if (waiter) {
+      waiter.cancelled = true;
     }
   }
 
@@ -321,6 +350,40 @@ class DistributedLockManager extends EventEmitter {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;
     }
+  }
+
+  /**
+   * Cleanup resources and prepare for shutdown
+   */
+  async cleanup() {
+    console.log('[DistributedLockManager] Cleaning up resources...');
+
+    // Stop cleanup interval
+    this.stopCleanup();
+
+    // Release all locks
+    const lockCount = this.locks.size;
+    const queuedCount = Array.from(this.lockQueue.values()).reduce((sum, q) => sum + q.length, 0);
+
+    // Reject all queued lock requests
+    for (const [resourceId, queue] of this.lockQueue.entries()) {
+      for (const request of queue) {
+        request.reject(new LockError('Lock manager is shutting down', { resourceId }));
+      }
+    }
+
+    // Clear all data structures
+    this.locks.clear();
+    this.lockQueue.clear();
+    this.deadlockDetector.clear();
+
+    console.log(`[DistributedLockManager] Cleanup complete: ${lockCount} locks released, ${queuedCount} queued requests rejected`);
+
+    this.emit('cleaned', {
+      locksReleased: lockCount,
+      queuedRequestsRejected: queuedCount,
+      timestamp: Date.now()
+    });
   }
 
   /**

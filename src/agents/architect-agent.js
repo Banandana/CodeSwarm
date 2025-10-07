@@ -133,14 +133,16 @@ class ArchitectAgent extends BaseAgent {
     for (const file of files) {
       try {
         let lockId;
-        if (file.action === 'modify') {
+        if (file.action === 'modify' || file.action === 'create') {
           lockId = await this.acquireLock(file.path);
         }
 
         try {
           await this.writeFile(file.path, file.content, {
             action: file.action,
-            taskId: task.id
+            taskId: task.id,
+            lockId: lockId,
+            agentId: this.agentId
           });
 
           this.emit('fileModified', {

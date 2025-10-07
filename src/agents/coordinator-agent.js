@@ -23,6 +23,13 @@ class CoordinatorAgent extends BaseAgent {
       fileAllocation: new Map()
     };
 
+    // Circuit breaker for recovery attempts to prevent infinite loops
+    this.recoveryCircuitBreaker = {
+      maxAttempts: 3,
+      attemptsByTask: new Map(), // taskId -> attempt count
+      resetTimeout: 300000 // 5 minutes
+    };
+
     // Add error handler to prevent crashes on unhandled errors
     // This is critical for long-running agent processes
     this.on('error', (error) => {
@@ -322,20 +329,35 @@ class CoordinatorAgent extends BaseAgent {
    * @private
    */
   async _processTaskQueue() {
+    // Track all task promises for event-driven completion
+    const activeTaskPromises = new Map();
+
+    // Process queue until all tasks are completed
     while (this.orchestration.taskQueue.length > 0 ||
            this.orchestration.activeTasks.size > 0) {
 
       // Check for tasks ready to execute
       const readyTasks = this._getReadyTasks();
 
-      // Assign tasks to agents
+      // Assign tasks to agents and collect promises
       for (const task of readyTasks) {
-        await this._assignTask(task);
+        const taskPromise = this._assignTask(task);
+        activeTaskPromises.set(task.id, taskPromise);
       }
 
-      // Wait for at least one task to complete
-      if (this.orchestration.activeTasks.size > 0) {
-        await this._waitForTaskCompletion();
+      // Wait for at least one task to complete using Promise.race
+      if (activeTaskPromises.size > 0) {
+        await Promise.race(Array.from(activeTaskPromises.values())).catch(() => {
+          // Ignore errors here, they're handled in _handleTaskFailure
+        });
+
+        // Clean up completed task promises
+        for (const [taskId, promise] of activeTaskPromises.entries()) {
+          // Check if task is no longer active
+          if (!this.orchestration.activeTasks.has(taskId)) {
+            activeTaskPromises.delete(taskId);
+          }
+        }
       }
 
       // Check budget status
@@ -378,6 +400,7 @@ class CoordinatorAgent extends BaseAgent {
   /**
    * Assign task to appropriate specialist agent
    * @private
+   * @returns {Promise} Task completion promise
    */
   async _assignTask(task) {
     try {
@@ -402,16 +425,22 @@ class CoordinatorAgent extends BaseAgent {
         timestamp: Date.now()
       });
 
-      // Send task assignment message
-      const taskPromise = agent.handleTaskAssignment(task);
+      // Send task assignment message and return promise for event-driven completion
+      const taskPromise = agent.handleTaskAssignment(task)
+        .then(result => {
+          this._handleTaskSuccess(task, result);
+          return result;
+        })
+        .catch(error => {
+          this._handleTaskFailure(task, error);
+          throw error;
+        });
 
-      // Handle completion
-      taskPromise
-        .then(result => this._handleTaskSuccess(task, result))
-        .catch(error => this._handleTaskFailure(task, error));
+      return taskPromise;
 
     } catch (error) {
       await this._handleTaskFailure(task, error);
+      throw error;
     }
   }
 
@@ -521,10 +550,31 @@ class CoordinatorAgent extends BaseAgent {
   }
 
   /**
-   * Attempt to recover from task failure
+   * Attempt to recover from task failure with circuit breaker
    * @private
    */
   async _attemptRecovery(task, error) {
+    // Check circuit breaker - prevent infinite recovery loops
+    const attemptCount = this.recoveryCircuitBreaker.attemptsByTask.get(task.id) || 0;
+
+    if (attemptCount >= this.recoveryCircuitBreaker.maxAttempts) {
+      console.error(`[${this.agentId}] Circuit breaker open for task ${task.id} (${attemptCount} attempts)`);
+      this.emit('circuitBreakerOpen', {
+        taskId: task.id,
+        attemptCount,
+        maxAttempts: this.recoveryCircuitBreaker.maxAttempts
+      });
+      return { success: false, reason: 'circuit_breaker_open' };
+    }
+
+    // Increment attempt count
+    this.recoveryCircuitBreaker.attemptsByTask.set(task.id, attemptCount + 1);
+
+    // Reset circuit breaker after timeout
+    setTimeout(() => {
+      this.recoveryCircuitBreaker.attemptsByTask.delete(task.id);
+    }, this.recoveryCircuitBreaker.resetTimeout);
+
     try {
       const context = {
         failedTask: task,
@@ -532,7 +582,9 @@ class CoordinatorAgent extends BaseAgent {
         completedTasks: this.orchestration.completedTasks,
         pendingTasks: this.orchestration.taskQueue,
         budgetUsed: this._getTotalCost(),
-        budgetRemaining: await this._getRemainingBudget()
+        budgetRemaining: await this._getRemainingBudget(),
+        attemptNumber: attemptCount + 1,
+        maxAttempts: this.recoveryCircuitBreaker.maxAttempts
       };
 
       const { systemPrompt, userPrompt, temperature, maxTokens } =
@@ -551,15 +603,21 @@ class CoordinatorAgent extends BaseAgent {
       };
 
     } catch (recoveryError) {
-      return { success: false };
+      console.error(`[${this.agentId}] Recovery attempt failed for task ${task.id}:`, recoveryError.message);
+      return { success: false, reason: 'recovery_error', error: recoveryError.message };
     }
   }
 
   /**
-   * Wait for at least one task to complete
+   * Wait for at least one task to complete (DEPRECATED - now using Promise.race)
+   * This method is kept for backwards compatibility but is no longer used
    * @private
+   * @deprecated Use Promise.race on task promises instead
    */
   async _waitForTaskCompletion() {
+    // This method is no longer needed with event-driven task completion
+    // Tasks complete via Promise.race in _processTaskQueue
+    // Keeping this stub for backwards compatibility
     const timeout = 300000; // 5 minutes
     const startTime = Date.now();
 
@@ -777,6 +835,9 @@ class CoordinatorAgent extends BaseAgent {
         completedTasks: this.orchestration.completedTasks,
         failedTasks: this.orchestration.failedTasks,
         fileAllocation: Array.from(this.orchestration.fileAllocation.entries())
+      },
+      recoveryCircuitBreaker: {
+        attemptsByTask: Array.from(this.recoveryCircuitBreaker.attemptsByTask.entries())
       }
     };
   }
@@ -824,12 +885,57 @@ class CoordinatorAgent extends BaseAgent {
       console.log(`  - Failed tasks: ${this.orchestration.failedTasks.length}`);
     }
 
+    // Restore circuit breaker state
+    if (state.recoveryCircuitBreaker) {
+      this.recoveryCircuitBreaker.attemptsByTask = new Map(
+        state.recoveryCircuitBreaker.attemptsByTask || []
+      );
+    }
+
     this.emit('coordinatorRestored', {
       features: this.orchestration.features.length,
       pendingTasks: this.orchestration.taskQueue.length,
       completedTasks: this.orchestration.completedTasks.length,
       timestamp: Date.now()
     });
+  }
+
+  /**
+   * Shutdown coordinator and all sub-agents
+   * @returns {Promise<void>}
+   */
+  async shutdown() {
+    console.log(`[${this.agentId}] Shutting down coordinator...`);
+
+    // Shutdown all feature coordinators
+    for (const [featureId, featureData] of this.orchestration.featureCoordinators) {
+      if (featureData.coordinator) {
+        try {
+          await featureData.coordinator.shutdown();
+        } catch (error) {
+          console.error(`[${this.agentId}] Error shutting down feature coordinator ${featureId}:`, error.message);
+        }
+      }
+    }
+
+    // Shutdown all specialist agents
+    for (const [agentType, agent] of this.orchestration.agents) {
+      try {
+        await agent.shutdown();
+      } catch (error) {
+        console.error(`[${this.agentId}] Error shutting down ${agentType} agent:`, error.message);
+      }
+    }
+
+    // Clear all maps
+    this.orchestration.featureCoordinators.clear();
+    this.orchestration.agents.clear();
+    this.orchestration.activeTasks.clear();
+
+    // Call parent shutdown
+    await super.shutdown();
+
+    console.log(`[${this.agentId}] Coordinator shutdown complete`);
   }
 }
 

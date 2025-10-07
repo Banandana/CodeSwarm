@@ -66,12 +66,38 @@ class BudgetManager extends EventEmitter {
       LOW: []
     };
 
+    // Mutex for atomic operations (FIX B1: Budget Race Condition)
+    // This prevents race conditions during validate-and-reserve operations
+    this.operationMutex = Promise.resolve();
+    this.mutexQueue = [];
+
     // Start cleanup interval
     this._startCleanupInterval();
   }
 
   /**
+   * Acquire mutex for atomic operations (FIX B1: Budget Race Condition)
+   * @private
+   * @returns {Promise<Function>} unlock function
+   */
+  async _acquireMutex() {
+    // Create a new promise that will be the next mutex
+    let unlock;
+    const nextMutex = new Promise(resolve => {
+      unlock = resolve;
+    });
+
+    // Wait for current mutex, then replace it
+    const currentMutex = this.operationMutex;
+    this.operationMutex = nextMutex;
+
+    await currentMutex;
+    return unlock;
+  }
+
+  /**
    * Validate operation before execution (with priority support)
+   * FIX B1: Now uses mutex for atomic validate-and-reserve
    * @param {string} operationId
    * @param {number} estimatedCost
    * @param {string} agentId
@@ -79,6 +105,9 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async validateOperation(operationId, estimatedCost, agentId, priority = 'MEDIUM') {
+    // FIX B1: Acquire mutex for atomic validate-and-reserve operation
+    const unlock = await this._acquireMutex();
+
     try {
       // Circuit breaker check
       if (!this.circuitBreaker.canExecute()) {
@@ -89,7 +118,7 @@ class BudgetManager extends EventEmitter {
         );
       }
 
-      // Calculate projected usage
+      // Calculate projected usage (atomic read within mutex)
       const totalProjected = this.usage.total + this.usage.reserved + estimatedCost;
 
       // Hard limit check
@@ -127,7 +156,7 @@ class BudgetManager extends EventEmitter {
         );
       }
 
-      // Reserve the budget
+      // Reserve the budget (atomic write within mutex)
       this.usage.reserved += estimatedCost;
       this.usage.operations.set(operationId, {
         operationId,
@@ -151,7 +180,8 @@ class BudgetManager extends EventEmitter {
         });
       }
 
-      this.circuitBreaker.recordSuccess();
+      // FIX B4: Removed recordSuccess() from here
+      // Circuit breaker success should only be recorded after operation completes (in recordUsage)
 
       return {
         approved: true,
@@ -172,11 +202,55 @@ class BudgetManager extends EventEmitter {
         `Budget validation failed: ${error.message}`,
         { operationId, agentId, originalError: error.message }
       );
+    } finally {
+      // FIX B1: Always release mutex, even on error
+      unlock();
     }
   }
 
   /**
+   * Release reserved budget without recording usage (FIX B3: Reserved Budget Not Released)
+   * Should be called in error handlers when operation fails before completion
+   * @param {string} operationId
+   * @returns {Promise<Object>}
+   */
+  async releaseReservation(operationId) {
+    const operation = this.usage.operations.get(operationId);
+
+    if (!operation) {
+      throw new BudgetError(
+        `Cannot release reservation: unknown operation ${operationId}`
+      );
+    }
+
+    if (operation.status !== 'reserved') {
+      throw new BudgetError(
+        `Cannot release reservation: operation ${operationId} is ${operation.status}`
+      );
+    }
+
+    // Release the reserved budget
+    this.usage.reserved -= operation.estimatedCost;
+    this.usage.operations.delete(operationId);
+
+    this.emit('reservationReleased', {
+      operationId,
+      estimatedCost: operation.estimatedCost,
+      agentId: operation.agentId,
+      reason: 'explicit-release'
+    });
+
+    return {
+      operationId,
+      releasedAmount: operation.estimatedCost,
+      remaining: this.getRemainingBudget()
+    };
+  }
+
+  /**
    * Record actual usage after operation completion
+   * FIX B4: Now records circuit breaker success
+   * FIX B2: Now rejects untracked operations
    * @param {string} operationId
    * @param {number} actualCost
    * @returns {Promise<Object>}
@@ -184,25 +258,17 @@ class BudgetManager extends EventEmitter {
   async recordUsage(operationId, actualCost) {
     const operation = this.usage.operations.get(operationId);
 
+    // FIX B2: Reject untracked operations instead of silently recording them
     if (!operation) {
-      // Operation wasn't tracked (possibly validated at a different level)
-      // Record usage directly without the detailed tracking
-      this.usage.total += actualCost;
-
-      this.usage.history.push({
-        operationId,
-        actualCost,
-        estimatedCost: actualCost,
-        variance: 0,
-        timestamp: Date.now(),
-        status: 'completed-untracked'
-      });
-
-      return {
-        operationId,
-        actualCost,
-        tracked: false
-      };
+      throw new BudgetError(
+        `Cannot record usage for untracked operation: ${operationId}. ` +
+        `All operations must be validated via validateOperation() before recording usage.`,
+        {
+          operationId,
+          actualCost,
+          reason: 'untracked-operation'
+        }
+      );
     }
 
     // Update totals
@@ -231,6 +297,10 @@ class BudgetManager extends EventEmitter {
       totalUsage: this.usage.total,
       remaining: this.getRemainingBudget()
     });
+
+    // FIX B4: Record circuit breaker success AFTER operation completes
+    // This ensures we only count successful operations, not just successful validations
+    this.circuitBreaker.recordSuccess();
 
     return {
       operationId,

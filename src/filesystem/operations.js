@@ -77,13 +77,36 @@ class FileSystemOperations extends EventEmitter {
    * @param {string} filePath - Relative to output directory
    * @returns {Promise<string>}
    */
-  async readFile(filePath) {
+  async readFile(filePath, options = {}) {
     try {
       // Validate file path using validation utility
       const fullPath = Validator.validateFilePath(filePath, this.outputDir);
 
       if (!await fs.pathExists(fullPath)) {
         return null;
+      }
+
+      // SECURITY: Check for symbolic links to prevent symlink attacks
+      const stats = await fs.lstat(fullPath);
+      if (stats.isSymbolicLink()) {
+        throw new FileSystemError(
+          `Security: Symbolic links are not allowed: ${filePath}`,
+          { filePath, securityIssue: 'symlink_detected' }
+        );
+      }
+
+      // SECURITY: Check file size limit before reading (10MB default)
+      const maxFileSize = options.maxFileSize || 10 * 1024 * 1024; // 10MB
+      if (stats.size > maxFileSize) {
+        throw new FileSystemError(
+          `Security: File size exceeds read limit. Size: ${(stats.size / 1024 / 1024).toFixed(2)}MB, Limit: ${(maxFileSize / 1024 / 1024).toFixed(2)}MB`,
+          {
+            filePath,
+            size: stats.size,
+            limit: maxFileSize,
+            securityIssue: 'file_size_limit_exceeded'
+          }
+        );
       }
 
       return await fs.readFile(fullPath, 'utf-8');
@@ -107,8 +130,36 @@ class FileSystemOperations extends EventEmitter {
       // Validate file path using validation utility
       const fullPath = Validator.validateFilePath(filePath, this.outputDir);
 
+      // SECURITY: Check file size limit (10MB default)
+      const maxFileSize = options.maxFileSize || 10 * 1024 * 1024; // 10MB
+      const contentSize = Buffer.byteLength(content, 'utf-8');
+
+      if (contentSize > maxFileSize) {
+        throw new FileSystemError(
+          `Security: File size exceeds limit. Size: ${(contentSize / 1024 / 1024).toFixed(2)}MB, Limit: ${(maxFileSize / 1024 / 1024).toFixed(2)}MB`,
+          {
+            filePath,
+            size: contentSize,
+            limit: maxFileSize,
+            securityIssue: 'file_size_limit_exceeded'
+          }
+        );
+      }
+
+      // SECURITY: Check for symbolic links to prevent symlink attacks
+      if (await fs.pathExists(fullPath)) {
+        const stats = await fs.lstat(fullPath);
+        if (stats.isSymbolicLink()) {
+          throw new FileSystemError(
+            `Security: Symbolic links are not allowed: ${filePath}`,
+            { filePath, securityIssue: 'symlink_detected' }
+          );
+        }
+      }
+
       // CRITICAL: Verify lock before writing (if lockManager is available)
-      if (this.lockManager && options.action === 'modify') {
+      // Skip lock verification only for 'overwrite' actions or when explicitly bypassed
+      if (this.lockManager && options.action !== 'overwrite' && !options.bypassLock) {
         const { lockId, agentId } = options;
 
         if (!lockId) {
@@ -149,7 +200,10 @@ class FileSystemOperations extends EventEmitter {
       }
 
       // Atomic write using temp file with cleanup
-      const tempPath = `${fullPath}.tmp`;
+      // Use timestamp + random to avoid collisions in concurrent operations
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(2, 8);
+      const tempPath = `${fullPath}.tmp.${timestamp}.${random}`;
 
       try {
         await fs.writeFile(tempPath, content, 'utf-8');
@@ -352,9 +406,10 @@ class FileSystemOperations extends EventEmitter {
   /**
    * Delete file
    * @param {string} filePath
+   * @param {Object} options - Delete options including lockId and agentId
    * @returns {Promise<void>}
    */
-  async deleteFile(filePath) {
+  async deleteFile(filePath, options = {}) {
     const fullPath = path.join(this.outputDir, filePath);
 
     // Security check
@@ -368,6 +423,38 @@ class FileSystemOperations extends EventEmitter {
       );
     }
 
+    // SECURITY: Check for symbolic links to prevent symlink attacks
+    if (await fs.pathExists(fullPath)) {
+      const stats = await fs.lstat(fullPath);
+      if (stats.isSymbolicLink()) {
+        throw new FileSystemError(
+          `Security: Symbolic links are not allowed: ${filePath}`,
+          { filePath, securityIssue: 'symlink_detected' }
+        );
+      }
+    }
+
+    // CRITICAL: Verify lock before deleting (if lockManager is available)
+    if (this.lockManager && !options.bypassLock) {
+      const { lockId, agentId } = options;
+
+      if (!lockId) {
+        throw new FileSystemError(
+          `Lock required for file delete operation on ${filePath}`,
+          { filePath }
+        );
+      }
+
+      // Verify the lock is valid and held by this agent
+      const lockValid = await this.lockManager.verifyLock(lockId, agentId);
+      if (!lockValid) {
+        throw new FileSystemError(
+          `Lock verification failed for ${filePath} - file may be locked by another agent`,
+          { filePath, lockId, agentId }
+        );
+      }
+    }
+
     if (await fs.pathExists(fullPath)) {
       // Store in history before deleting
       const content = await fs.readFile(fullPath, 'utf-8');
@@ -378,22 +465,33 @@ class FileSystemOperations extends EventEmitter {
       });
 
       await fs.remove(fullPath);
+
+      // Emit event for tracking
+      this.emit('fileDeleted', {
+        filePath,
+        timestamp: Date.now()
+      });
     }
   }
 
   /**
    * Restore file from history
    * @param {string} filePath
+   * @param {Object} options - Restore options including lockId and agentId
    * @returns {Promise<boolean>}
    */
-  async restoreFromHistory(filePath) {
+  async restoreFromHistory(filePath, options = {}) {
     const history = this.fileHistory.get(filePath);
 
     if (!history) {
       return false;
     }
 
-    await this.writeFile(filePath, history.content);
+    // Pass through options to ensure lock verification if required
+    await this.writeFile(filePath, history.content, {
+      action: 'overwrite',
+      ...options
+    });
     return true;
   }
 

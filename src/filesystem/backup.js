@@ -101,14 +101,25 @@ class BackupManager {
   /**
    * Restore from backup
    * @param {string} backupName - Backup timestamp name
+   * @param {Object} options - Restore options
    * @returns {Promise<boolean>}
    */
-  async restore(backupName) {
+  async restore(backupName, options = {}) {
     try {
       const backupPath = path.join(this.backupDir, backupName);
 
       if (!await fs.pathExists(backupPath)) {
         throw new Error(`Backup not found: ${backupName}`);
+      }
+
+      // CRITICAL: Backup restore should only happen when system is shutdown
+      // or with explicit bypass for emergency recovery
+      if (!options.systemShutdown && !options.emergencyRestore) {
+        throw new FileSystemError(
+          'Backup restore requires system shutdown or emergency restore flag. ' +
+          'Active file locks must be released before restore.',
+          { backupName, safetyCheck: 'failed' }
+        );
       }
 
       // Remove current output directory
