@@ -20,12 +20,58 @@ Guidelines:
 - Write self-documenting code with clear variable names
 - Add comments only for complex business logic
 
-You MUST respond in the following JSON format:
+ERROR HANDLING PATTERNS:
+- Use try-catch blocks for async operations
+- Return appropriate HTTP status codes (200, 201, 400, 401, 403, 404, 500)
+- Log errors with context but never expose sensitive data
+- Use centralized error handling middleware
+Example:
+  try {
+    const result = await service.operation();
+    res.status(200).json(result);
+  } catch (error) {
+    if (error.name === 'ValidationError') return res.status(400).json({ error: error.message });
+    if (error.name === 'UnauthorizedError') return res.status(401).json({ error: 'Unauthorized' });
+    console.error('Operation failed:', { error: error.message, stack: error.stack });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+
+SECURITY CHECKLIST (OWASP):
+1. Input Validation: Sanitize and validate all user input
+2. Authentication: Use bcrypt (cost 12+), implement rate limiting
+3. Authorization: Check permissions on every protected route
+4. SQL Injection: Use parameterized queries or ORM
+5. XSS Prevention: Escape output, set security headers
+6. Never log passwords, tokens, or sensitive data
+
+TESTING REQUIREMENTS:
+Your code must be testable:
+- Export functions for unit testing
+- Use dependency injection for services/databases
+- Separate business logic from routing
+- Document test scenarios in testCases array
+
+PROJECT CONTEXT SCHEMA:
+You receive projectInfo with this structure:
+{
+  "backend": {
+    "framework": "express" | "fastify" | "nest",
+    "language": "javascript" | "typescript",
+    "database": "postgresql" | "mongodb" | "mysql" | null,
+    "auth": "jwt" | "session" | "oauth" | null
+  }
+}
+Adapt your code to match specified frameworks. Use sensible defaults if not specified.
+
+CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text.
+Your entire response must be parseable as JSON.
+
+REQUIRED JSON FORMAT:
 {
   "files": [
     {
       "path": "relative/path/to/file.js",
-      "action": "create" | "modify",
+      "action": "create",
       "content": "full file content"
     }
   ],
@@ -33,7 +79,43 @@ You MUST respond in the following JSON format:
   "testCases": ["description of test cases needed"],
   "securityConsiderations": ["any security notes"],
   "documentation": "brief description of changes"
-}`;
+}
+
+JSON VALIDATION RULES:
+1. Response MUST start with { and end with }
+2. files: MUST be non-empty array
+3. Each file MUST have: path (string), action ("create" or "modify"), content (string)
+4. content: MUST properly escape quotes (\\\"), newlines (\\n), backslashes (\\\\)
+5. dependencies: MUST be array of "package@version" strings
+6. testCases: MUST be non-empty array of strings
+7. documentation: MUST be non-empty string
+8. NO trailing commas, NO comments in JSON
+
+EXAMPLE RESPONSE:
+{
+  "files": [
+    {
+      "path": "src/api/users.js",
+      "action": "create",
+      "content": "const express = require('express');\\nconst router = express.Router();\\nconst { validateUser } = require('../middleware/validation');\\n\\nrouter.post('/', validateUser, async (req, res) => {\\n  try {\\n    const user = await userService.create(req.body);\\n    res.status(201).json(user);\\n  } catch (error) {\\n    if (error.name === 'ValidationError') {\\n      return res.status(400).json({ error: error.message });\\n    }\\n    console.error('User creation failed:', error);\\n    res.status(500).json({ error: 'Failed to create user' });\\n  }\\n});\\n\\nmodule.exports = router;"
+    }
+  ],
+  "dependencies": ["express@4.18.2"],
+  "testCases": [
+    "Should return 201 when creating user with valid data",
+    "Should return 400 when email is invalid",
+    "Should return 500 on database error"
+  ],
+  "securityConsiderations": [
+    "Input validation using middleware",
+    "Error messages don't leak sensitive data"
+  ],
+  "documentation": "Created user API endpoint with validation and error handling"
+}
+
+DO NOT wrap your response in markdown code blocks.
+DO NOT add any text before or after the JSON.
+If you cannot complete the task, return a valid JSON with error field.`;
 
 const TASK_TEMPLATES = {
   CREATE_API_ENDPOINT: (task) => `

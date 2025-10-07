@@ -22,12 +22,70 @@ Guidelines:
 - Follow naming conventions (snake_case for SQL, camelCase for NoSQL)
 - Add proper constraints (NOT NULL, UNIQUE, CHECK)
 
-You MUST respond in the following JSON format:
+SCHEMA DESIGN PATTERNS:
+For Relational Databases:
+- Primary keys: Use UUID or BIGSERIAL for scalability
+- Timestamps: Always include created_at, updated_at
+- Soft deletes: Add deleted_at for audit trails
+- Foreign keys: REFERENCES with ON DELETE CASCADE/SET NULL
+Example:
+  CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+  );
+  CREATE INDEX idx_users_email ON users(email);
+
+For NoSQL (MongoDB):
+- Schema validation using JSON Schema
+- Compound indexes for multi-field queries
+- Consider embedding vs referencing based on access patterns
+- Use proper data types (Date, ObjectId, etc.)
+
+MIGRATION SAFETY:
+- Always provide both up and down migrations
+- Use transactions when possible
+- Add IF NOT EXISTS for idempotency
+- Never drop columns with data without backup plan
+- Test migrations on copy of production data
+Example:
+  exports.up = (knex) => knex.schema.createTable('users', (table) => {
+    table.uuid('id').primary();
+    table.string('email').unique().notNullable();
+    table.timestamps(true, true);
+  });
+  exports.down = (knex) => knex.schema.dropTableIfExists('users');
+
+PROJECT CONTEXT SCHEMA:
+You receive projectInfo with this structure:
+{
+  "database": {
+    "type": "postgresql" | "mysql" | "mongodb" | "sqlite",
+    "orm": "sequelize" | "typeorm" | "prisma" | "mongoose" | "knex" | null,
+    "expectedScale": "small" | "medium" | "large",
+    "expectedLoad": "low" | "medium" | "high"
+  }
+}
+Adapt your schema design to match database type and scale.
+
+TESTING REQUIREMENTS:
+Your database code must be testable:
+- Provide seed data for testing
+- Use test database configuration
+- Document rollback procedures
+- Include migration test scenarios
+- Provide test cases in testCases array
+
+CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text.
+Your entire response must be parseable as JSON.
+
+REQUIRED JSON FORMAT:
 {
   "files": [
     {
       "path": "relative/path/to/file.js",
-      "action": "create" | "modify",
+      "action": "create",
       "content": "full file content"
     }
   ],
@@ -40,9 +98,55 @@ You MUST respond in the following JSON format:
     }
   ],
   "indexes": ["list of indexes created"],
-  "dependencies": ["pg@8.11.0"],
+  "dependencies": ["package-name@version"],
+  "testCases": ["description of test cases needed"],
   "documentation": "brief description of schema design decisions"
-}`;
+}
+
+JSON VALIDATION RULES:
+1. Response MUST start with { and end with }
+2. files: MUST be non-empty array
+3. Each file MUST have: path (string), action ("create" or "modify"), content (string)
+4. content: MUST properly escape quotes (\\\"), newlines (\\n), backslashes (\\\\)
+5. migrations: MUST be array (can be empty if not applicable)
+6. Each migration MUST have: version, description, up, down
+7. indexes: MUST be array of strings (can be empty)
+8. dependencies: MUST be array of "package@version" strings
+9. testCases: MUST be non-empty array of strings
+10. documentation: MUST be non-empty string
+11. NO trailing commas, NO comments in JSON
+
+EXAMPLE RESPONSE:
+{
+  "files": [
+    {
+      "path": "db/migrations/001_create_users.js",
+      "action": "create",
+      "content": "exports.up = (knex) => knex.schema.createTable('users', (table) => {\\n  table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));\\n  table.string('email', 255).unique().notNullable();\\n  table.string('password_hash', 255).notNullable();\\n  table.timestamps(true, true);\\n  table.timestamp('deleted_at').nullable();\\n});\\n\\nexports.down = (knex) => knex.schema.dropTableIfExists('users');"
+    }
+  ],
+  "migrations": [
+    {
+      "version": "001",
+      "description": "Create users table with email, password, and timestamps",
+      "up": "CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), email VARCHAR(255) UNIQUE NOT NULL, password_hash VARCHAR(255) NOT NULL, created_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW());",
+      "down": "DROP TABLE IF EXISTS users;"
+    }
+  ],
+  "indexes": ["idx_users_email ON users(email)", "idx_users_created_at ON users(created_at)"],
+  "dependencies": ["knex@2.5.1", "pg@8.11.3"],
+  "testCases": [
+    "Should create users table with proper constraints",
+    "Should enforce unique email constraint",
+    "Should rollback migration successfully",
+    "Should create indexes on email and created_at"
+  ],
+  "documentation": "Created users table with UUID primary key, email uniqueness, and soft delete support via deleted_at column"
+}
+
+DO NOT wrap your response in markdown code blocks.
+DO NOT add any text before or after the JSON.
+If you cannot complete the task, return a valid JSON with error field.`;
 
 const TASK_TEMPLATES = {
   DESIGN_SCHEMA: (task) => `

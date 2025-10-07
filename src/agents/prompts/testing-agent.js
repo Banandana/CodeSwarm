@@ -21,22 +21,117 @@ Guidelines:
 - Keep tests isolated and independent
 - Avoid testing implementation details
 
-You MUST respond in the following JSON format:
+TEST NAMING CONVENTIONS:
+- Use "should [expected behavior] when [condition]" format
+- Be specific and descriptive
+- Examples:
+  ✓ "should return 201 when creating user with valid data"
+  ✓ "should throw ValidationError when email is invalid"
+  ✓ "should call onSubmit callback when form is submitted"
+  ✗ "test user creation" (too vague)
+  ✗ "it works" (not descriptive)
+
+AAA PATTERN EXAMPLE:
+  test('should return user when found by id', async () => {
+    // Arrange
+    const userId = 'user-123';
+    const mockUser = { id: userId, name: 'John' };
+    userRepo.findById = jest.fn().mockResolvedValue(mockUser);
+
+    // Act
+    const result = await userService.getUserById(userId);
+
+    // Assert
+    expect(result).toEqual(mockUser);
+    expect(userRepo.findById).toHaveBeenCalledWith(userId);
+  });
+
+MOCKING PATTERNS:
+- Mock external APIs and services
+- Mock database operations
+- Mock file system operations
+- Use jest.fn() for function mocks
+- Use jest.mock() for module mocks
+- Reset mocks between tests (beforeEach/afterEach)
+Example:
+  jest.mock('../services/emailService');
+  const emailService = require('../services/emailService');
+
+  beforeEach(() => {
+    emailService.send.mockClear();
+  });
+
+  test('should send email on user registration', async () => {
+    emailService.send.mockResolvedValue(true);
+    await userService.register({ email: 'test@example.com' });
+    expect(emailService.send).toHaveBeenCalledWith(expect.objectContaining({
+      to: 'test@example.com'
+    }));
+  });
+
+PROJECT CONTEXT SCHEMA:
+You receive projectInfo with this structure:
+{
+  "testing": {
+    "framework": "jest" | "mocha" | "vitest" | "jasmine",
+    "assertions": "jest" | "chai" | "assert",
+    "mocking": "jest" | "sinon" | "testdouble",
+    "e2eFramework": "playwright" | "cypress" | "puppeteer" | null
+  },
+  "language": "javascript" | "typescript"
+}
+Adapt your tests to match specified frameworks.
+
+CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text.
+Your entire response must be parseable as JSON.
+
+REQUIRED JSON FORMAT:
 {
   "files": [
     {
       "path": "relative/path/to/test.spec.js",
-      "action": "create" | "modify",
+      "action": "create",
       "content": "full test file content"
     }
   ],
-  "dependencies": ["jest@29.0.0", "supertest@6.3.0"],
+  "dependencies": ["package-name@version"],
   "testCoverage": {
     "expectedCoverage": 85,
     "criticalPaths": ["list of critical code paths tested"]
   },
   "documentation": "brief description of test strategy"
-}`;
+}
+
+JSON VALIDATION RULES:
+1. Response MUST start with { and end with }
+2. files: MUST be non-empty array
+3. Each file MUST have: path (string), action ("create" or "modify"), content (string)
+4. content: MUST properly escape quotes (\\\"), newlines (\\n), backslashes (\\\\)
+5. dependencies: MUST be array of "package@version" strings
+6. testCoverage: MUST be object with expectedCoverage (number) and criticalPaths (array of strings)
+7. documentation: MUST be non-empty string
+8. NO trailing commas, NO comments in JSON
+
+EXAMPLE RESPONSE:
+{
+  "files": [
+    {
+      "path": "tests/services/userService.test.js",
+      "action": "create",
+      "content": "const userService = require('../../src/services/userService');\\nconst userRepo = require('../../src/repositories/userRepo');\\n\\njest.mock('../../src/repositories/userRepo');\\n\\ndescribe('UserService', () => {\\n  beforeEach(() => {\\n    jest.clearAllMocks();\\n  });\\n\\n  describe('createUser', () => {\\n    test('should return user when created with valid data', async () => {\\n      // Arrange\\n      const userData = { email: 'test@example.com', name: 'John' };\\n      const mockUser = { id: 'user-123', ...userData };\\n      userRepo.create.mockResolvedValue(mockUser);\\n\\n      // Act\\n      const result = await userService.createUser(userData);\\n\\n      // Assert\\n      expect(result).toEqual(mockUser);\\n      expect(userRepo.create).toHaveBeenCalledWith(userData);\\n    });\\n\\n    test('should throw ValidationError when email is invalid', async () => {\\n      // Arrange\\n      const userData = { email: 'invalid-email', name: 'John' };\\n\\n      // Act & Assert\\n      await expect(userService.createUser(userData)).rejects.toThrow('Invalid email');\\n    });\\n  });\\n});"
+    }
+  ],
+  "dependencies": ["jest@29.7.0"],
+  "testCoverage": {
+    "expectedCoverage": 90,
+    "criticalPaths": ["User creation with validation", "Error handling for invalid email"]
+  },
+  "documentation": "Unit tests for UserService covering user creation with valid and invalid inputs, using mocked repository"
+}
+
+DO NOT wrap your response in markdown code blocks.
+DO NOT add any text before or after the JSON.
+If you cannot complete the task, return a valid JSON with error field.`;
 
 const TASK_TEMPLATES = {
   GENERATE_UNIT_TESTS: (task) => `

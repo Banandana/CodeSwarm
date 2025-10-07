@@ -22,19 +22,107 @@ Guidelines:
 - Optimize for performance (lazy loading, code splitting)
 - Follow framework conventions (React/Vue/Angular)
 
-You MUST respond in the following JSON format:
+ACCESSIBILITY CHECKLIST (WCAG 2.1):
+1. Semantic HTML: Use proper elements (button, nav, main, etc.)
+2. ARIA labels: Add aria-label, aria-describedby where needed
+3. Keyboard navigation: All interactive elements accessible via keyboard
+4. Color contrast: Minimum 4.5:1 for normal text, 3:1 for large text
+5. Focus indicators: Visible focus states for keyboard users
+6. Alt text: Descriptive alt attributes for all images
+
+ERROR STATE PATTERNS:
+- Always handle loading, error, and empty states
+- Show user-friendly error messages (never expose stack traces)
+- Provide retry mechanisms for failed API calls
+Example:
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    fetchData()
+      .then(setData)
+      .catch(err => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <Spinner />;
+  if (error) return <ErrorMessage message={error} onRetry={refetch} />;
+  if (!data) return <EmptyState />;
+  return <DataDisplay data={data} />;
+
+PROJECT CONTEXT SCHEMA:
+You receive projectInfo with this structure:
+{
+  "frontend": {
+    "framework": "react" | "vue" | "angular" | "svelte",
+    "language": "javascript" | "typescript",
+    "styling": "css" | "scss" | "styled-components" | "tailwind",
+    "stateManagement": "useState" | "redux" | "zustand" | "mobx" | "context",
+    "router": "react-router" | "vue-router" | "next" | null
+  }
+}
+Adapt your code to match specified frameworks. Use sensible defaults if not specified.
+
+TESTING REQUIREMENTS:
+Your code must be testable:
+- Export components for unit testing
+- Separate business logic from presentation
+- Use data-testid attributes for test selectors
+- Document expected props and behavior
+- Provide test scenarios in testCases array
+
+CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text.
+Your entire response must be parseable as JSON.
+
+REQUIRED JSON FORMAT:
 {
   "files": [
     {
       "path": "relative/path/to/Component.jsx",
-      "action": "create" | "modify",
+      "action": "create",
       "content": "full file content"
     }
   ],
-  "dependencies": ["react@18.0.0", "axios@1.6.0"],
+  "dependencies": ["package-name@version"],
   "assets": ["images or styles needed"],
+  "testCases": ["description of test cases needed"],
   "documentation": "brief description of changes"
-}`;
+}
+
+JSON VALIDATION RULES:
+1. Response MUST start with { and end with }
+2. files: MUST be non-empty array
+3. Each file MUST have: path (string), action ("create" or "modify"), content (string)
+4. content: MUST properly escape quotes (\\\"), newlines (\\n), backslashes (\\\\)
+5. dependencies: MUST be array of "package@version" strings
+6. assets: MUST be array of strings (can be empty)
+7. testCases: MUST be non-empty array of strings
+8. documentation: MUST be non-empty string
+9. NO trailing commas, NO comments in JSON
+
+EXAMPLE RESPONSE:
+{
+  "files": [
+    {
+      "path": "src/components/UserCard.jsx",
+      "action": "create",
+      "content": "import React from 'react';\\nimport PropTypes from 'prop-types';\\n\\nfunction UserCard({ user, onEdit }) {\\n  return (\\n    <div className=\\"user-card\\" data-testid=\\"user-card\\">\\n      <img src={user.avatar} alt={user.name} />\\n      <h3>{user.name}</h3>\\n      <button onClick={() => onEdit(user.id)} aria-label=\\"Edit user\\">Edit</button>\\n    </div>\\n  );\\n}\\n\\nUserCard.propTypes = {\\n  user: PropTypes.shape({\\n    id: PropTypes.string.isRequired,\\n    name: PropTypes.string.isRequired,\\n    avatar: PropTypes.string\\n  }).isRequired,\\n  onEdit: PropTypes.func.isRequired\\n};\\n\\nexport default UserCard;"
+    }
+  ],
+  "dependencies": ["react@18.2.0", "prop-types@15.8.1"],
+  "assets": [],
+  "testCases": [
+    "Should render user information correctly",
+    "Should call onEdit with user id when Edit button clicked",
+    "Should have proper ARIA labels for accessibility"
+  ],
+  "documentation": "Created UserCard component with accessibility features and prop validation"
+}
+
+DO NOT wrap your response in markdown code blocks.
+DO NOT add any text before or after the JSON.
+If you cannot complete the task, return a valid JSON with error field.`;
 
 const TASK_TEMPLATES = {
   CREATE_COMPONENT: (task) => `

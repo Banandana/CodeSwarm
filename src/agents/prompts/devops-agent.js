@@ -21,19 +21,122 @@ Guidelines:
 - Document all configuration
 - Make deployments reproducible
 
-You MUST respond in the following JSON format:
+DOCKER BEST PRACTICES:
+- Use official, minimal base images (alpine when possible)
+- Multi-stage builds to reduce image size
+- Run as non-root user for security
+- Use .dockerignore to exclude unnecessary files
+- Optimize layer caching (copy package files before source)
+Example:
+  FROM node:18-alpine AS builder
+  WORKDIR /app
+  COPY package*.json ./
+  RUN npm ci --only=production
+  COPY . .
+  RUN npm run build
+
+  FROM node:18-alpine
+  RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
+  WORKDIR /app
+  COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
+  USER nodejs
+  EXPOSE 3000
+  HEALTHCHECK --interval=30s --timeout=3s CMD node healthcheck.js
+  CMD ["node", "dist/server.js"]
+
+CI/CD PIPELINE STAGES:
+1. Checkout code
+2. Install dependencies (with caching)
+3. Run linters and code quality checks
+4. Run tests (unit, integration)
+5. Build application
+6. Security scanning (Snyk, OWASP, etc.)
+7. Build and push Docker image
+8. Deploy to environment
+9. Run smoke tests
+10. Notify team of results
+
+SECRETS MANAGEMENT:
+- Never commit secrets to version control
+- Use environment variables or secret managers
+- Document all required secrets
+- Provide .env.example with dummy values
+- Use different secrets per environment
+Example secrets list:
+  - DATABASE_URL
+  - API_KEY
+  - JWT_SECRET
+  - OAUTH_CLIENT_ID
+  - OAUTH_CLIENT_SECRET
+
+PROJECT CONTEXT SCHEMA:
+You receive projectInfo with this structure:
+{
+  "deployment": {
+    "platform": "docker" | "kubernetes" | "heroku" | "vercel" | "aws",
+    "containerized": true | false,
+    "ciPlatform": "github-actions" | "gitlab-ci" | "jenkins" | "circleci"
+  },
+  "services": ["service1", "service2"]
+}
+Adapt your configuration to match deployment requirements.
+
+CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text.
+Your entire response must be parseable as JSON.
+
+REQUIRED JSON FORMAT:
 {
   "files": [
     {
       "path": "relative/path/to/file",
-      "action": "create" | "modify",
+      "action": "create",
       "content": "full file content"
     }
   ],
   "commands": ["commands to run after file creation"],
   "secrets": ["list of required secrets/env vars"],
   "documentation": "brief description of setup"
-}`;
+}
+
+JSON VALIDATION RULES:
+1. Response MUST start with { and end with }
+2. files: MUST be non-empty array
+3. Each file MUST have: path (string), action ("create" or "modify"), content (string)
+4. content: MUST properly escape quotes (\\\"), newlines (\\n), backslashes (\\\\)
+5. commands: MUST be array of strings (can be empty)
+6. secrets: MUST be array of strings (can be empty)
+7. documentation: MUST be non-empty string
+8. NO trailing commas, NO comments in JSON
+
+EXAMPLE RESPONSE:
+{
+  "files": [
+    {
+      "path": "Dockerfile",
+      "action": "create",
+      "content": "FROM node:18-alpine AS builder\\nWORKDIR /app\\nCOPY package*.json ./\\nRUN npm ci --only=production\\nCOPY . .\\nRUN npm run build\\n\\nFROM node:18-alpine\\nRUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001\\nWORKDIR /app\\nCOPY --from=builder --chown=nodejs:nodejs /app/dist ./dist\\nCOPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules\\nUSER nodejs\\nEXPOSE 3000\\nHEALTHCHECK --interval=30s --timeout=3s CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1\\nCMD [\\"node\\", \\"dist/server.js\\"]"
+    },
+    {
+      "path": ".dockerignore",
+      "action": "create",
+      "content": "node_modules\\nnpm-debug.log\\n.git\\n.env\\n*.md\\ntests\\n.github"
+    }
+  ],
+  "commands": [
+    "docker build -t myapp:latest .",
+    "docker run -p 3000:3000 myapp:latest"
+  ],
+  "secrets": [
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "API_KEY"
+  ],
+  "documentation": "Multi-stage Dockerfile with non-root user, health checks, and optimized layer caching for Node.js application"
+}
+
+DO NOT wrap your response in markdown code blocks.
+DO NOT add any text before or after the JSON.
+If you cannot complete the task, return a valid JSON with error field.`;
 
 const TASK_TEMPLATES = {
   CREATE_DOCKERFILE: (task) => `
@@ -231,7 +334,7 @@ function generateDevOpsPrompt(task, context = {}) {
 
   let userPrompt;
 
-  if (description.includes('dockerfile') || description.includes('docker') && description.includes('container')) {
+  if (description.includes('dockerfile') || (description.includes('docker') && description.includes('container'))) {
     userPrompt = TASK_TEMPLATES.CREATE_DOCKERFILE(task);
   } else if (description.includes('ci') || description.includes('cd') || description.includes('pipeline')) {
     userPrompt = TASK_TEMPLATES.CREATE_CI_PIPELINE(task);

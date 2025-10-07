@@ -31,7 +31,10 @@ Task Decomposition Principles:
 5. Right-Sized: 30min-2hr estimated completion time
 6. Sequential When Needed: Some tasks must complete before others
 
-You MUST respond in the following JSON format:
+CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text.
+Your entire response must be parseable as JSON.
+
+REQUIRED JSON FORMAT:
 {
   "projectAnalysis": {
     "type": "web-app" | "api" | "cli" | "library" | "mobile-app",
@@ -71,7 +74,79 @@ You MUST respond in the following JSON format:
   },
   "criticalPath": ["task-001", "task-002", "task-003"],
   "estimatedBudget": 2.50
-}`;
+}
+
+JSON VALIDATION RULES:
+1. Response MUST start with { and end with }
+2. projectAnalysis: MUST be object with all required fields
+3. tasks: MUST be non-empty array of task objects
+4. Each task MUST have: id, name, description, agentType, priority, estimatedCost, dependencies (array), files (array), metadata (object)
+5. dependencyGraph: MUST have sequential (array of arrays) and parallel (array of arrays)
+6. fileAllocation: MUST be object mapping file paths to task IDs
+7. criticalPath: MUST be array of task IDs
+8. estimatedBudget: MUST be number
+9. NO trailing commas, NO comments in JSON
+10. agentType MUST be one of: "backend", "frontend", "testing", "database", "devops", "docs", "architect"
+11. priority MUST be one of: "HIGH", "MEDIUM", "LOW"
+
+EXAMPLE RESPONSE:
+{
+  "projectAnalysis": {
+    "type": "web-app",
+    "complexity": "moderate",
+    "estimatedTasks": 8,
+    "requiredAgents": ["backend", "frontend", "database", "testing"],
+    "technologies": ["Node.js", "React", "PostgreSQL"]
+  },
+  "tasks": [
+    {
+      "id": "task-001",
+      "name": "Design database schema for users",
+      "description": "Create users table with email, password, and profile fields",
+      "agentType": "database",
+      "priority": "HIGH",
+      "estimatedCost": 0.12,
+      "dependencies": [],
+      "files": ["db/migrations/001_create_users.js", "db/models/user.js"],
+      "metadata": {
+        "tables": ["users"],
+        "fields": ["email", "password_hash", "name"]
+      }
+    },
+    {
+      "id": "task-002",
+      "name": "Create user authentication API",
+      "description": "Implement JWT-based login and registration endpoints",
+      "agentType": "backend",
+      "priority": "HIGH",
+      "estimatedCost": 0.18,
+      "dependencies": ["task-001"],
+      "files": ["src/api/auth.js", "src/middleware/auth.js"],
+      "metadata": {
+        "endpoints": ["/login", "/register"],
+        "authType": "JWT"
+      }
+    }
+  ],
+  "dependencyGraph": {
+    "sequential": [
+      ["task-001", "task-002"]
+    ],
+    "parallel": [
+      ["task-003", "task-004"]
+    ]
+  },
+  "fileAllocation": {
+    "src/api/auth.js": ["task-002"],
+    "db/models/user.js": ["task-001"]
+  },
+  "criticalPath": ["task-001", "task-002"],
+  "estimatedBudget": 1.25
+}
+
+DO NOT wrap your response in markdown code blocks.
+DO NOT add any text before or after the JSON.
+If you cannot complete the task, return a valid JSON with error field.`;
 
 const TASK_TEMPLATES = {
   ANALYZE_PROPOSAL: (proposal) => `

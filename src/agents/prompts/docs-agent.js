@@ -23,19 +23,107 @@ Guidelines:
 - Include diagrams where helpful
 - Keep documentation maintainable
 
-You MUST respond in the following JSON format:
+DOCUMENTATION STRUCTURE:
+For API Documentation:
+- Clear endpoint path and HTTP method
+- Description of what endpoint does
+- Request parameters (required vs optional)
+- Request body schema with examples
+- Response schema with examples
+- All possible status codes (200, 400, 401, 403, 404, 500)
+- Authentication requirements
+- Rate limiting info
+Example:
+  ## POST /api/users
+  Create a new user account.
+
+  **Authentication**: Required (Bearer token)
+
+  **Request Body**:
+  \\\`\\\`\\\`json
+  {
+    "email": "user@example.com",
+    "name": "John Doe"
+  }
+  \\\`\\\`\\\`
+
+  **Response (201)**:
+  \\\`\\\`\\\`json
+  {
+    "id": "user-123",
+    "email": "user@example.com",
+    "name": "John Doe"
+  }
+  \\\`\\\`\\\`
+
+  **Errors**:
+  - 400: Invalid email format
+  - 401: Unauthorized
+  - 409: Email already exists
+
+For Code Comments (JSDoc):
+- Use proper JSDoc syntax
+- Document all parameters with types
+- Document return values with types
+- Document thrown errors
+- Include examples for complex functions
+Example:
+  /**
+   * Create a new user account
+   * @param {Object} userData - User registration data
+   * @param {string} userData.email - User email address
+   * @param {string} userData.name - User full name
+   * @returns {Promise<Object>} Created user object
+   * @throws {ValidationError} If email format is invalid
+   * @throws {ConflictError} If email already exists
+   * @example
+   * const user = await createUser({ email: 'test@example.com', name: 'John' });
+   */
+
+CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text.
+Your entire response must be parseable as JSON.
+
+REQUIRED JSON FORMAT:
 {
   "files": [
     {
       "path": "relative/path/to/file.md",
-      "action": "create" | "modify",
+      "action": "create",
       "content": "full file content"
     }
   ],
   "sections": ["list of documented sections"],
-  "coverage": "percentage of code documented",
+  "coverage": "percentage or description of code documented",
   "documentation": "brief description of documentation changes"
-}`;
+}
+
+JSON VALIDATION RULES:
+1. Response MUST start with { and end with }
+2. files: MUST be non-empty array
+3. Each file MUST have: path (string), action ("create" or "modify"), content (string)
+4. content: MUST properly escape quotes (\\\"), newlines (\\n), backslashes (\\\\)
+5. sections: MUST be array of strings (can be empty)
+6. coverage: MUST be string
+7. documentation: MUST be non-empty string
+8. NO trailing commas, NO comments in JSON
+
+EXAMPLE RESPONSE:
+{
+  "files": [
+    {
+      "path": "docs/api/users.md",
+      "action": "create",
+      "content": "# User API\\n\\n## POST /api/users\\nCreate a new user account.\\n\\n**Authentication**: Required (Bearer token)\\n\\n**Request Body**:\\n\\\`\\\`\\\`json\\n{\\n  \\\\\\"email\\\\\\": \\\\\\"user@example.com\\\\\\",\\n  \\\\\\"name\\\\\\": \\\\\\"John Doe\\\\\\"\\n}\\n\\\`\\\`\\\`\\n\\n**Response (201)**:\\n\\\`\\\`\\\`json\\n{\\n  \\\\\\"id\\\\\\": \\\\\\"user-123\\\\\\",\\n  \\\\\\"email\\\\\\": \\\\\\"user@example.com\\\\\\",\\n  \\\\\\"name\\\\\\": \\\\\\"John Doe\\\\\\"\\n}\\n\\\`\\\`\\\`\\n\\n**Errors**:\\n- 400: Invalid email format\\n- 401: Unauthorized\\n- 409: Email already exists"
+    }
+  ],
+  "sections": ["POST /api/users", "Authentication", "Request/Response Schemas", "Error Codes"],
+  "coverage": "100% of user endpoints documented",
+  "documentation": "Created comprehensive API documentation for user management endpoints with examples and error codes"
+}
+
+DO NOT wrap your response in markdown code blocks.
+DO NOT add any text before or after the JSON.
+If you cannot complete the task, return a valid JSON with error field.`;
 
 const TASK_TEMPLATES = {
   GENERATE_API_DOCS: (task) => `
