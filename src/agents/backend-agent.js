@@ -10,6 +10,11 @@ const { AgentError } = require('../utils/errors');
 class BackendAgent extends BaseAgent {
   constructor(agentId, communicationHub, options = {}) {
     super(agentId, 'backend', communicationHub, options);
+
+    // Add error handler to prevent crashes
+    this.on('error', (error) => {
+      console.error(`[${this.agentId}] Error:`, error.message);
+    });
   }
 
   /**
@@ -67,6 +72,14 @@ class BackendAgent extends BaseAgent {
     const result = this._parseResponse(response.content);
     console.log(`[BackendAgent] Response parsed, ${result.files?.length || 0} files to write`);
 
+    // Validate exactly one file
+    if (!result.files || result.files.length !== 1) {
+      throw new AgentError(
+        `Agent must return exactly 1 file, got ${result.files?.length || 0}. Task: ${task.id}`,
+        { agentId: this.agentId, taskId: task.id, fileCount: result.files?.length || 0 }
+      );
+    }
+
     // Execute file operations
     console.log(`[BackendAgent] Executing file operations...`);
     await this._executeFileOperations(result.files, task);
@@ -79,7 +92,7 @@ class BackendAgent extends BaseAgent {
       files: result.files.map(f => ({
         path: f.path,
         action: f.action,
-        size: f.content.length
+        size: (f.contentBase64 || f.content || '').length
       })),
       dependencies: result.dependencies || [],
       testCases: result.testCases || [],
@@ -144,6 +157,15 @@ class BackendAgent extends BaseAgent {
 
     for (const file of files) {
       try {
+        // Decode Base64 content if present, otherwise use plain content
+        const content = file.contentBase64
+          ? Buffer.from(file.contentBase64, 'base64').toString('utf-8')
+          : file.content;
+
+        if (!content) {
+          throw new Error(`File ${file.path} has no content or contentBase64 field`);
+        }
+
         // Acquire lock for file
         let lockId;
         if (file.action === 'modify') {
@@ -152,7 +174,7 @@ class BackendAgent extends BaseAgent {
 
         try {
           if (file.action === 'create' || file.action === 'modify') {
-            await this.writeFile(file.path, file.content, {
+            await this.writeFile(file.path, content, {
               action: file.action,
               taskId: task.id
             });

@@ -45,10 +45,12 @@ class TaskExecutor extends EventEmitter {
 
       const plan = await this.coordinator.analyzeProposal(proposal, projectInfo);
 
+      // In hierarchical coordination, plan has features, not tasks
+      // Tasks are generated later by feature coordinators
       this.emit('phaseCompleted', {
         phase: 'analysis',
         result: {
-          totalTasks: plan.tasks.length,
+          totalFeatures: plan.features?.length || 0,
           estimatedBudget: plan.estimatedBudget
         },
         timestamp: Date.now()
@@ -146,10 +148,15 @@ class TaskExecutor extends EventEmitter {
         });
       }
 
+      // Get total task count from coordinator's task queue
+      const totalTasks = (this.coordinator.orchestration.completedTasks?.length || 0) +
+                        (this.coordinator.orchestration.taskQueue?.length || 0) +
+                        (this.coordinator.orchestration.activeTasks?.size || 0);
+
       this.emit('progress', {
         completed: this.execution.completedTasks.length,
-        total: plan.tasks.length,
-        percentage: (this.execution.completedTasks.length / plan.tasks.length) * 100,
+        total: totalTasks > 0 ? totalTasks : this.execution.completedTasks.length,
+        percentage: totalTasks > 0 ? (this.execution.completedTasks.length / totalTasks) * 100 : 0,
         timestamp: Date.now()
       });
     });
@@ -187,39 +194,25 @@ class TaskExecutor extends EventEmitter {
     try {
       const coordinatorState = this.coordinator.serialize();
 
-      // Flatten orchestration data for checkpoint compatibility
+      // Save orchestration state directly without flattening
       const state = {
-        // Top-level required fields
-        currentTask: coordinatorState.orchestration?.projectPlan?.currentTask || this.execution.currentTask || null,
-        completedTasks: coordinatorState.orchestration?.completedTasks || this.execution.completedTasks || [],
-        pendingTasks: coordinatorState.orchestration?.taskQueue || [],
-        failedTasks: coordinatorState.orchestration?.failedTasks || this.execution.failedTasks || [],
-
-        // Budget tracking
-        budgetUsed: await this._getBudgetUsed(),
-        budgetRemaining: await this._getBudgetRemaining(),
-
-        // File tracking
-        filesCreated: this.execution.filesCreated || [],
-        filesModified: this.execution.filesModified || [],
-
-        // Agent tracking
-        agents: coordinatorState.orchestration?.agents || [],
-
-        // Project info
-        projectInfo: coordinatorState.orchestration?.projectPlan?.projectInfo || {},
-
-        // Config
-        config: this.config || {},
-
-        // Keep full orchestration for debugging
+        // Full orchestration state (contains projectPlan, features, taskQueue, etc.)
         orchestration: coordinatorState.orchestration,
 
         // Execution metadata
         execution: {
           startTime: this.execution.startTime,
-          currentTask: this.execution.currentTask
+          currentTask: this.execution.currentTask,
+          filesCreated: this.execution.filesCreated || [],
+          filesModified: this.execution.filesModified || []
         },
+
+        // Budget tracking
+        budgetUsed: await this._getBudgetUsed(),
+        budgetRemaining: await this._getBudgetRemaining(),
+
+        // Config
+        config: this.config || {},
 
         // Additional data
         ...additionalData
@@ -316,14 +309,22 @@ class TaskExecutor extends EventEmitter {
   validatePlan(plan) {
     const issues = [];
 
-    if (!plan.tasks || plan.tasks.length === 0) {
-      issues.push('No tasks in plan');
+    // In hierarchical coordination, check for features instead of tasks
+    if (plan.features) {
+      if (plan.features.length === 0) {
+        issues.push('No features in plan');
+      }
+    } else if (!plan.tasks || plan.tasks.length === 0) {
+      // Fallback for non-hierarchical plans
+      issues.push('No tasks or features in plan');
     }
 
-    // Check for circular dependencies
-    const cycles = this._detectCircularDependencies(plan.tasks);
-    if (cycles.length > 0) {
-      issues.push(`Circular dependencies detected: ${cycles.join(', ')}`);
+    // Check for circular dependencies (only if tasks are already generated)
+    if (plan.tasks) {
+      const cycles = this._detectCircularDependencies(plan.tasks);
+      if (cycles.length > 0) {
+        issues.push(`Circular dependencies detected: ${cycles.join(', ')}`);
+      }
     }
 
     // Check budget
@@ -331,10 +332,12 @@ class TaskExecutor extends EventEmitter {
       issues.push('Invalid budget estimate');
     }
 
-    // Check file conflicts
-    const conflicts = this._detectFileConflicts(plan.fileAllocation);
-    if (conflicts.length > 0) {
-      issues.push(`File conflicts detected: ${conflicts.length} files`);
+    // Check file conflicts (only if fileAllocation exists)
+    if (plan.fileAllocation) {
+      const conflicts = this._detectFileConflicts(plan.fileAllocation);
+      if (conflicts.length > 0) {
+        issues.push(`File conflicts detected: ${conflicts.length} files`);
+      }
     }
 
     return {

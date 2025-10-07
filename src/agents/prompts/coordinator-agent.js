@@ -34,60 +34,69 @@ Task Decomposition Principles:
 CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text.
 Your entire response must be parseable as JSON.
 
-REQUIRED JSON FORMAT:
+REQUIRED JSON FORMAT (HIERARCHICAL - CREATE FEATURES, NOT TASKS):
 {
   "projectAnalysis": {
     "type": "web-app" | "api" | "cli" | "library" | "mobile-app",
     "complexity": "simple" | "moderate" | "complex",
-    "estimatedTasks": 10,
+    "estimatedFeatures": 8,
     "requiredAgents": ["backend", "testing", "database"],
     "technologies": ["Node.js", "PostgreSQL", "React"]
   },
-  "tasks": [
+  "features": [
     {
-      "id": "task-001",
-      "name": "Create user authentication API",
-      "description": "Implement JWT-based authentication endpoints",
-      "agentType": "backend",
+      "id": "feature-001",
+      "name": "User Authentication System",
+      "description": "Complete JWT-based authentication with login, registration, and middleware. Includes user model, auth routes, JWT middleware, and password hashing.",
       "priority": "HIGH",
-      "estimatedCost": 0.15,
+      "estimatedCost": 0.25,
+      "estimatedFiles": 4,
       "dependencies": [],
-      "files": ["src/api/auth.js", "src/middleware/auth.js"],
+      "requiredAgents": ["backend", "database"],
       "metadata": {
-        "endpoints": ["/login", "/register", "/refresh"],
-        "authType": "JWT"
+        "authType": "JWT",
+        "securityFeatures": ["password hashing", "token refresh", "session management"]
+      }
+    },
+    {
+      "id": "feature-002",
+      "name": "Database Schema and Models",
+      "description": "Design and implement database schema for users, products, and orders. Include migrations, models, and seed data.",
+      "priority": "HIGH",
+      "estimatedCost": 0.30,
+      "estimatedFiles": 6,
+      "dependencies": [],
+      "requiredAgents": ["database"],
+      "metadata": {
+        "database": "PostgreSQL",
+        "tables": ["users", "products", "orders"]
       }
     }
   ],
-  "dependencyGraph": {
+  "featureDependencies": {
     "sequential": [
-      ["task-001", "task-002"],
-      ["task-003", "task-005"]
+      ["feature-002", "feature-001"]
     ],
     "parallel": [
-      ["task-004", "task-006", "task-007"]
+      ["feature-003", "feature-004", "feature-005"]
     ]
   },
-  "fileAllocation": {
-    "src/api/auth.js": ["task-001"],
-    "src/models/user.js": ["task-002"]
-  },
-  "criticalPath": ["task-001", "task-002", "task-003"],
+  "criticalPath": ["feature-002", "feature-001", "feature-006"],
   "estimatedBudget": 2.50
 }
 
 JSON VALIDATION RULES:
 1. Response MUST start with { and end with }
-2. projectAnalysis: MUST be object with all required fields
-3. tasks: MUST be non-empty array of task objects
-4. Each task MUST have: id, name, description, agentType, priority, estimatedCost, dependencies (array), files (array), metadata (object)
-5. dependencyGraph: MUST have sequential (array of arrays) and parallel (array of arrays)
-6. fileAllocation: MUST be object mapping file paths to task IDs
-7. criticalPath: MUST be array of task IDs
+2. projectAnalysis: MUST be object with estimatedFeatures (number, NOT estimatedTasks)
+3. features: MUST be non-empty array (5-15 high-level features)
+4. Each feature MUST have: id (string), name (string), description (detailed string), priority, estimatedCost, estimatedFiles (number), dependencies (array), requiredAgents (array), metadata (object)
+5. CRITICAL: Create HIGH-LEVEL features, NOT individual file tasks. Feature coordinators will break down into tasks later.
+6. featureDependencies: MUST have sequential (array of arrays) and parallel (array of arrays)
+7. criticalPath: MUST be array of feature IDs
 8. estimatedBudget: MUST be number
 9. NO trailing commas, NO comments in JSON
-10. agentType MUST be one of: "backend", "frontend", "testing", "database", "devops", "docs", "architect"
-11. priority MUST be one of: "HIGH", "MEDIUM", "LOW"
+10. priority MUST be one of: "HIGH", "MEDIUM", "LOW"
+11. Features should represent logical modules/components (e.g., "Authentication System", "Database Layer", "API Routes")
 
 EXAMPLE RESPONSE:
 {
@@ -101,13 +110,13 @@ EXAMPLE RESPONSE:
   "tasks": [
     {
       "id": "task-001",
-      "name": "Design database schema for users",
-      "description": "Create users table with email, password, and profile fields",
+      "name": "Create users migration",
+      "description": "Create database migration file for users table with email, password, and profile fields",
       "agentType": "database",
       "priority": "HIGH",
-      "estimatedCost": 0.12,
+      "estimatedCost": 0.06,
       "dependencies": [],
-      "files": ["db/migrations/001_create_users.js", "db/models/user.js"],
+      "files": ["db/migrations/001_create_users.js"],
       "metadata": {
         "tables": ["users"],
         "fields": ["email", "password_hash", "name"]
@@ -115,6 +124,19 @@ EXAMPLE RESPONSE:
     },
     {
       "id": "task-002",
+      "name": "Create user model",
+      "description": "Create user model file with schema and validations",
+      "agentType": "database",
+      "priority": "HIGH",
+      "estimatedCost": 0.06,
+      "dependencies": ["task-001"],
+      "files": ["db/models/user.js"],
+      "metadata": {
+        "model": "User"
+      }
+    },
+    {
+      "id": "task-003",
       "name": "Create user authentication API",
       "description": "Implement JWT-based login and registration endpoints",
       "agentType": "backend",
@@ -170,6 +192,14 @@ Your Analysis Should Include:
 3. **Core Features**
    - List all features mentioned or implied
    - Prioritize features (critical path first)
+
+**CRITICAL TASK GENERATION RULE:**
+- Each task MUST generate EXACTLY ONE file
+- If a feature requires multiple files, create SEPARATE tasks for each file
+- Example: Instead of one task for "Create auth system" with files [auth.js, middleware.js], create TWO tasks:
+  - task-001: Create auth.js
+  - task-002: Create middleware.js (depends on task-001)
+- This ensures reliable code generation and parsing
    - Identify optional/nice-to-have features
 
 4. **Task Decomposition**
@@ -409,7 +439,7 @@ Analyze the situation and provide coordination guidance in the appropriate forma
     systemPrompt: COORDINATOR_SYSTEM_PROMPT,
     userPrompt,
     temperature: 0.7,
-    maxTokens: 4000
+    maxTokens: 16000  // Increased to handle very complex proposals with 40+ tasks
   };
 }
 

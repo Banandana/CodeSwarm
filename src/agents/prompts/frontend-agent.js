@@ -75,13 +75,20 @@ Your code must be testable:
 CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text.
 Your entire response must be parseable as JSON.
 
-REQUIRED JSON FORMAT:
+REQUIRED JSON FORMAT (MUST CONTAIN EXACTLY ONE FILE):
+
+CRITICAL ENCODING REQUIREMENT:
+- The "contentBase64" field MUST contain Base64-encoded file content
+- DO NOT use "content" field - use "contentBase64" instead
+- Base64 encoding prevents ALL escaping issues
+- To encode: convert your file content to Base64 string
+
 {
   "files": [
     {
       "path": "relative/path/to/Component.jsx",
       "action": "create",
-      "content": "full file content"
+      "contentBase64": "BASE64_ENCODED_FILE_CONTENT_HERE"
     }
   ],
   "dependencies": ["package-name@version"],
@@ -90,11 +97,16 @@ REQUIRED JSON FORMAT:
   "documentation": "brief description of changes"
 }
 
-JSON VALIDATION RULES:
+JSON VALIDATION RULES (CRITICAL - RESPONSE WILL FAIL IF NOT VALID JSON):
 1. Response MUST start with { and end with }
-2. files: MUST be non-empty array
-3. Each file MUST have: path (string), action ("create" or "modify"), content (string)
-4. content: MUST properly escape quotes (\\\"), newlines (\\n), backslashes (\\\\)
+2. files: MUST be array with EXACTLY ONE file object (not zero, not multiple)
+3. The single file MUST have: path (string), action ("create" or "modify"), content (string)
+4. contentBase64: MUST be valid Base64-encoded string with ALL special characters escaped:
+   - Every " must be \\\\"
+   - Every \\\\ must be \\\\\\\\
+   - Every newline must be \\\\n
+   - Every tab must be \\\\t
+   - TRIPLE-CHECK the content field for unescaped quotes!
 5. dependencies: MUST be array of "package@version" strings
 6. assets: MUST be array of strings (can be empty)
 7. testCases: MUST be non-empty array of strings
@@ -400,7 +412,7 @@ Output your response in the required JSON format.`;
     systemPrompt: FRONTEND_SYSTEM_PROMPT,
     userPrompt,
     temperature: 0.7,
-    maxTokens: 4000
+    maxTokens: 8000  // Increased from 4000 to handle complex multi-file responses
   };
 }
 

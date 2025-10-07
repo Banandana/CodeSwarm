@@ -66,13 +66,13 @@ Adapt your code to match specified frameworks. Use sensible defaults if not spec
 CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanatory text.
 Your entire response must be parseable as JSON.
 
-REQUIRED JSON FORMAT:
+REQUIRED JSON FORMAT (MUST CONTAIN EXACTLY ONE FILE):
 {
   "files": [
     {
       "path": "relative/path/to/file.js",
       "action": "create",
-      "content": "full file content"
+      "contentBase64": "BASE64_ENCODED_FILE_CONTENT_HERE"
     }
   ],
   "dependencies": ["package-name@version"],
@@ -81,11 +81,18 @@ REQUIRED JSON FORMAT:
   "documentation": "brief description of changes"
 }
 
+CRITICAL ENCODING REQUIREMENT:
+- The "contentBase64" field MUST contain Base64-encoded file content
+- DO NOT use "content" field - use "contentBase64" instead
+- Base64 encoding prevents ALL escaping issues
+- To encode: convert your file content to Base64 string
+- Example: "console.log('hello');" becomes "Y29uc29sZS5sb2coJ2hlbGxvJyk7"
+
 JSON VALIDATION RULES:
 1. Response MUST start with { and end with }
-2. files: MUST be non-empty array
-3. Each file MUST have: path (string), action ("create" or "modify"), content (string)
-4. content: MUST properly escape quotes (\\\"), newlines (\\n), backslashes (\\\\)
+2. files: MUST be array with EXACTLY ONE file object (not zero, not multiple)
+3. The single file MUST have: path (string), action ("create" or "modify"), contentBase64 (Base64 string)
+4. contentBase64: MUST be valid Base64-encoded string
 5. dependencies: MUST be array of "package@version" strings
 6. testCases: MUST be non-empty array of strings
 7. documentation: MUST be non-empty string
@@ -97,7 +104,7 @@ EXAMPLE RESPONSE:
     {
       "path": "src/api/users.js",
       "action": "create",
-      "content": "const express = require('express');\\nconst router = express.Router();\\nconst { validateUser } = require('../middleware/validation');\\n\\nrouter.post('/', validateUser, async (req, res) => {\\n  try {\\n    const user = await userService.create(req.body);\\n    res.status(201).json(user);\\n  } catch (error) {\\n    if (error.name === 'ValidationError') {\\n      return res.status(400).json({ error: error.message });\\n    }\\n    console.error('User creation failed:', error);\\n    res.status(500).json({ error: 'Failed to create user' });\\n  }\\n});\\n\\nmodule.exports = router;"
+      "contentBase64": "Y29uc3QgZXhwcmVzcyA9IHJlcXVpcmUoJ2V4cHJlc3MnKTsKY29uc3Qgcm91dGVyID0gZXhwcmVzcy5Sb3V0ZXIoKTsKCnJvdXRlci5nZXQoJy8nLCAocmVxLCByZXMpID0+IHsKICByZXMuanNvbih7IG1lc3NhZ2U6ICdIZWxsbycgfSk7Cn0pOwoKbW9kdWxlLmV4cG9ydHMgPSByb3V0ZXI7"
     }
   ],
   "dependencies": ["express@4.18.2"],
@@ -355,7 +362,7 @@ Output your response in the required JSON format.`;
     systemPrompt: BACKEND_SYSTEM_PROMPT,
     userPrompt,
     temperature: 0.7,
-    maxTokens: 4000
+    maxTokens: 8000  // Increased from 4000 to handle complex multi-file responses
   };
 }
 

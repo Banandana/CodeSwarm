@@ -10,6 +10,11 @@ const { AgentError } = require('../utils/errors');
 class ArchitectAgent extends BaseAgent {
   constructor(agentId, communicationHub, options = {}) {
     super(agentId, 'architect', communicationHub, options);
+
+    // Add error handler to prevent crashes
+    this.on('error', (error) => {
+      console.error(`[${this.agentId}] Error:`, error.message);
+    });
   }
 
   /**
@@ -50,7 +55,14 @@ class ArchitectAgent extends BaseAgent {
     // Parse response
     const result = this._parseResponse(response.content);
 
-    // Execute file operations
+    // Validate exactly one file
+    if (!result.files || result.files.length !== 1) {
+      throw new AgentError(
+        `Agent must return exactly 1 file, got ${result.files?.length || 0}. Task: ${task.id}`,
+        { agentId: this.agentId, taskId: task.id, fileCount: result.files?.length || 0 }
+      );
+    }
+ // Execute file operations
     await this._executeFileOperations(result.files, task);
 
     return {

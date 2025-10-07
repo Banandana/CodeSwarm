@@ -37,24 +37,26 @@ CodeSwarm is a multi-agent autonomous code generation system that transforms pro
 # Install dependencies
 npm install
 
-# Configure API key
-cp .env.example .env
-# Edit .env and add your CLAUDE_API_KEY
+# Run setup wizard (creates .env with API key)
+node src/cli/index.js setup
 
-# Generate code from proposal
-node src/cli/index.js generate \
-  --proposal "Create a REST API with Express and PostgreSQL" \
-  --budget 5000 \
-  --output ./my-project
+# Start code generation from proposal file
+node src/cli/index.js start \
+  --proposal ./proposal.txt \
+  --output ./my-project \
+  --budget 10
 
 # Resume from checkpoint
-node src/cli/index.js resume --checkpoint ./my-project/.codeswarm/checkpoint.json
+node src/cli/index.js start --output ./my-project --resume
 
-# Validate generated code
-node src/cli/index.js validate --path ./my-project
+# Check project status
+node src/cli/index.js status --output ./my-project
 
-# Run tests
-node src/cli/index.js test --path ./my-project
+# Validate generated code (security scan)
+node src/cli/index.js validate --output ./my-project
+
+# Clean temporary files
+node src/cli/index.js clean --output ./my-project
 ```
 
 ---
@@ -266,37 +268,49 @@ MAX_CONCURRENT_TASKS=3
 
 ## 🧪 CLI Commands
 
-### Generate Project
+### Setup Wizard
 ```bash
-node src/cli/index.js generate \
-  --proposal "Your project description" \
-  --budget 5000 \
-  --output ./output-directory
+node src/cli/index.js setup
+# Interactive wizard to configure API key and defaults
+```
+
+### Start Project
+```bash
+node src/cli/index.js start \
+  --proposal ./proposal.txt \
+  --output ./output-directory \
+  --budget 10 \
+  --mode verbose
 ```
 
 ### Resume from Checkpoint
 ```bash
-node src/cli/index.js resume \
-  --checkpoint ./output-directory/.codeswarm/checkpoint.json
-```
-
-### Validate Code
-```bash
-node src/cli/index.js validate \
-  --path ./output-directory
-```
-
-### Run Tests
-```bash
-node src/cli/index.js test \
-  --path ./output-directory \
-  --coverage
+node src/cli/index.js start \
+  --output ./output-directory \
+  --resume
 ```
 
 ### Check Status
 ```bash
 node src/cli/index.js status \
-  --path ./output-directory
+  --output ./output-directory
+```
+
+### Validate Code (Security Scan)
+```bash
+node src/cli/index.js validate \
+  --output ./output-directory
+```
+
+### Clean Temporary Files
+```bash
+node src/cli/index.js clean \
+  --output ./output-directory
+
+# Remove all generated code
+node src/cli/index.js clean \
+  --output ./output-directory \
+  --all
 ```
 
 ---
@@ -305,25 +319,37 @@ node src/cli/index.js status \
 
 ### Simple REST API
 ```bash
-node src/cli/index.js generate \
-  --proposal "Create a REST API for a todo list with Express and PostgreSQL. Include authentication with JWT." \
-  --budget 3000 \
+# Create proposal file
+echo "Create a REST API for a todo list with Express and PostgreSQL. Include authentication with JWT." > proposal.txt
+
+# Generate code
+node src/cli/index.js start \
+  --proposal ./proposal.txt \
+  --budget 15 \
   --output ./todo-api
 ```
 
 ### Full-Stack Application
 ```bash
-node src/cli/index.js generate \
-  --proposal "Create a full-stack e-commerce application with React frontend, Express backend, and MongoDB. Include user authentication, product catalog, shopping cart, and checkout." \
-  --budget 10000 \
+# Create proposal file
+echo "Create a full-stack e-commerce application with React frontend, Express backend, and MongoDB. Include user authentication, product catalog, shopping cart, and checkout." > ecommerce-proposal.txt
+
+# Generate code
+node src/cli/index.js start \
+  --proposal ./ecommerce-proposal.txt \
+  --budget 50 \
   --output ./ecommerce-app
 ```
 
 ### Microservices Architecture
 ```bash
-node src/cli/index.js generate \
-  --proposal "Design a microservices architecture for a social media platform with user service, post service, and notification service. Include Docker configuration and CI/CD pipeline." \
-  --budget 8000 \
+# Create proposal file
+echo "Design a microservices architecture for a social media platform with user service, post service, and notification service. Include Docker configuration and CI/CD pipeline." > microservices-proposal.txt
+
+# Generate code
+node src/cli/index.js start \
+  --proposal ./microservices-proposal.txt \
+  --budget 40 \
   --output ./social-platform
 ```
 

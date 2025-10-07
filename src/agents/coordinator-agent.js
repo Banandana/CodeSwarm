@@ -13,6 +13,8 @@ class CoordinatorAgent extends BaseAgent {
 
     this.orchestration = {
       projectPlan: null,
+      features: [],
+      featureCoordinators: new Map(),
       taskQueue: [],
       activeTasks: new Map(),
       completedTasks: [],
@@ -20,6 +22,13 @@ class CoordinatorAgent extends BaseAgent {
       agents: new Map(),
       fileAllocation: new Map()
     };
+
+    // Add error handler to prevent crashes on unhandled errors
+    // This is critical for long-running agent processes
+    this.on('error', (error) => {
+      console.error(`[${this.agentId}] Error:`, error.message);
+      // Log but continue - don't crash the system
+    });
   }
 
   /**
@@ -34,7 +43,7 @@ class CoordinatorAgent extends BaseAgent {
       const { systemPrompt, userPrompt, temperature, maxTokens } =
         generateCoordinatorPrompt('ANALYZE_PROPOSAL', { proposal });
 
-      // Call Claude API
+      // Call Claude API (with retry for network errors only)
       const response = await this.retryWithBackoff(async () => {
         return await this.callClaude(
           [{ role: 'user', content: userPrompt }],
@@ -47,7 +56,7 @@ class CoordinatorAgent extends BaseAgent {
         );
       });
 
-      // Parse plan
+      // Parse plan (NO RETRY - parsing errors should fail fast)
       const plan = this._parseResponse(response.content);
 
       // Enhance with project info
@@ -56,12 +65,20 @@ class CoordinatorAgent extends BaseAgent {
       // Store plan
       this.orchestration.projectPlan = plan;
 
-      // Build task queue with priorities
-      this._buildTaskQueue(plan);
+      // Validate features exist
+      if (!plan.features || !Array.isArray(plan.features) || plan.features.length === 0) {
+        throw new AgentError(
+          'Plan must contain at least one feature',
+          { agentId: this.agentId }
+        );
+      }
+
+      // Store features
+      this.orchestration.features = plan.features;
 
       // Emit event
       this.emit('proposalAnalyzed', {
-        totalTasks: plan.tasks.length,
+        totalFeatures: plan.features.length,
         estimatedBudget: plan.estimatedBudget,
         criticalPath: plan.criticalPath,
         timestamp: Date.now()
@@ -88,12 +105,25 @@ class CoordinatorAgent extends BaseAgent {
 
     const plan = this.orchestration.projectPlan;
 
+    console.log(`[${this.agentId}] Starting execution with ${this.orchestration.features.length} features`);
+
     this.emit('executionStarted', {
-      totalTasks: plan.tasks.length,
+      totalFeatures: this.orchestration.features.length,
       timestamp: Date.now()
     });
 
     try {
+      // Skip feature planning if already have feature coordinators (from resume)
+      if (this.orchestration.featureCoordinators.size === 0) {
+        // Spawn feature coordinators and plan all features
+        await this._planFeatures();
+
+        // Build unified task queue from all feature tasks
+        this._buildTaskQueue(plan);
+      } else {
+        console.log(`[${this.agentId}] Using existing feature plans from checkpoint (${this.orchestration.featureCoordinators.size} features)`);
+      }
+
       // Process tasks according to dependency graph
       await this._processTaskQueue();
 
@@ -120,16 +150,127 @@ class CoordinatorAgent extends BaseAgent {
   }
 
   /**
-   * Build task queue from plan
+   * Plan all features in parallel using feature coordinators
+   * @private
+   */
+  async _planFeatures() {
+    console.log(`[${this.agentId}] Planning ${this.orchestration.features.length} features in parallel`);
+
+    // Spawn feature coordinators for all features
+    const planningPromises = this.orchestration.features.map(async (feature) => {
+      return await this._spawnFeatureCoordinator(feature);
+    });
+
+    // Wait for all feature planning to complete
+    const results = await Promise.allSettled(planningPromises);
+
+    // Check for failures
+    const failures = results.filter(r => r.status === 'rejected');
+    if (failures.length > 0) {
+      console.error(`[${this.agentId}] ${failures.length} features failed to plan`);
+      failures.forEach((f, i) => {
+        console.error(`  Feature ${i}: ${f.reason}`);
+      });
+      throw new AgentError(
+        `Failed to plan ${failures.length} features`,
+        { agentId: this.agentId, failures: failures.length }
+      );
+    }
+
+    console.log(`[${this.agentId}] All ${this.orchestration.features.length} features planned successfully`);
+  }
+
+  /**
+   * Spawn a feature coordinator and plan the feature
+   * @private
+   */
+  async _spawnFeatureCoordinator(feature) {
+    const FeatureCoordinatorAgent = require('./feature-coordinator-agent');
+    // Use feature ID + timestamp + random string for guaranteed uniqueness
+    const coordinatorId = `feature-coord-${feature.id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    console.log(`[${this.agentId}] Spawning coordinator for feature: ${feature.name}`);
+
+    const coordinator = new FeatureCoordinatorAgent(
+      coordinatorId,
+      this.communicationHub,
+      {
+        ...this.config,
+        parentCoordinatorId: this.agentId
+      }
+    );
+
+    await coordinator.initialize();
+
+    // Plan the feature (generates detailed tasks)
+    const plan = await coordinator.planFeature(feature);
+
+    // Store coordinator reference
+    this.orchestration.featureCoordinators.set(feature.id, {
+      coordinator,
+      plan,
+      feature
+    });
+
+    console.log(`[${this.agentId}] Feature ${feature.name} planned: ${plan.tasks.length} tasks`);
+
+    return plan;
+  }
+
+  /**
+   * Build task queue from all feature tasks
    * @private
    */
   _buildTaskQueue(plan) {
+    // Collect all tasks from all feature coordinators with globally unique IDs
+    const allTasks = [];
+
+    for (const [featureId, featureData] of this.orchestration.featureCoordinators) {
+      // Prefix task IDs with feature ID to ensure global uniqueness
+      const prefixedTasks = featureData.plan.tasks.map(task => ({
+        ...task,
+        id: `${featureId}-${task.id}`,
+        originalId: task.id,  // Keep original for reference
+        // Prefix dependencies with same feature ID
+        dependencies: (task.dependencies || []).map(depId => `${featureId}-${depId}`)
+      }));
+
+      allTasks.push(...prefixedTasks);
+    }
+
+    console.log(`[${this.agentId}] Collected ${allTasks.length} tasks from ${this.orchestration.featureCoordinators.size} features`);
+
+    // Handle feature-level dependencies
+    if (plan.featureDependencies && plan.featureDependencies.sequential) {
+      for (const [sourceFeatureId, targetFeatureId] of plan.featureDependencies.sequential) {
+        // Get last task of source feature
+        const sourceTasks = allTasks.filter(t => t.parentFeatureId === sourceFeatureId);
+        if (sourceTasks.length === 0) continue;
+
+        const lastSourceTask = sourceTasks[sourceTasks.length - 1];
+
+        // Get first task of target feature
+        const targetTasks = allTasks.filter(t => t.parentFeatureId === targetFeatureId);
+        if (targetTasks.length === 0) continue;
+
+        const firstTargetTask = targetTasks[0];
+
+        // Add dependency from target's first task to source's last task
+        if (!firstTargetTask.dependencies) {
+          firstTargetTask.dependencies = [];
+        }
+        firstTargetTask.dependencies.push(lastSourceTask.id);
+
+        console.log(`[${this.agentId}] Added feature dependency: ${targetFeatureId} depends on ${sourceFeatureId}`);
+      }
+    }
+
     // Sort tasks by dependency order and priority
-    const taskMap = new Map(plan.tasks.map(t => [t.id, t]));
+    const taskMap = new Map(allTasks.map(t => [t.id, t]));
 
     // Build dependency graph
     const dependencyGraph = new Map();
-    for (const task of plan.tasks) {
+    for (const task of allTasks) {
       dependencyGraph.set(task.id, task.dependencies || []);
     }
 
@@ -479,14 +620,41 @@ class CoordinatorAgent extends BaseAgent {
    */
   _parseResponse(content) {
     try {
-      const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) ||
-                       content.match(/```\n([\s\S]*?)\n```/) ||
-                       [null, content];
+      // Clean up the content first
+      let cleanContent = content.trim();
 
-      const jsonStr = jsonMatch[1] || content;
-      return JSON.parse(jsonStr.trim());
+      // Try multiple extraction strategies
+      let jsonStr = cleanContent;
+
+      // Strategy 1: Extract from markdown code fences with 'json' language tag
+      let jsonMatch = cleanContent.match(/```json\s*\n([\s\S]*?)\n```/);
+      if (jsonMatch && jsonMatch[1]) {
+        jsonStr = jsonMatch[1];
+      } else {
+        // Strategy 2: Extract from generic markdown code fences
+        jsonMatch = cleanContent.match(/```\s*\n([\s\S]*?)\n```/);
+        if (jsonMatch && jsonMatch[1]) {
+          jsonStr = jsonMatch[1];
+        } else {
+          // Strategy 3: Remove leading/trailing code fences if present
+          jsonStr = cleanContent
+            .replace(/^```json\s*\n?/i, '')
+            .replace(/^```\s*\n?/, '')
+            .replace(/\n?```\s*$/, '');
+        }
+      }
+
+      // Final cleanup
+      jsonStr = jsonStr.trim();
+
+      // Attempt to parse
+      return JSON.parse(jsonStr);
 
     } catch (error) {
+      // Provide detailed error info for debugging
+      console.error('[CoordinatorAgent] JSON Parse Error:', error.message);
+      console.error('[CoordinatorAgent] Content sample:', content.substring(0, 500));
+
       throw new AgentError(
         `Failed to parse Claude response: ${error.message}`,
         { agentId: this.agentId, content: content.substring(0, 200) }
@@ -566,7 +734,8 @@ class CoordinatorAgent extends BaseAgent {
     return {
       ...super.getStatus(),
       projectPlan: this.orchestration.projectPlan ? {
-        totalTasks: this.orchestration.projectPlan.tasks.length,
+        totalFeatures: this.orchestration.features.length,
+        totalTasks: this.orchestration.taskQueue.length,
         estimatedBudget: this.orchestration.projectPlan.estimatedBudget
       } : null,
       progress: {
@@ -574,7 +743,17 @@ class CoordinatorAgent extends BaseAgent {
         active: this.orchestration.activeTasks.size,
         completed: this.orchestration.completedTasks.length,
         failed: this.orchestration.failedTasks.length
-      }
+      },
+      features: Array.from(this.orchestration.featureCoordinators.entries()).map(([id, data]) => ({
+        id,
+        name: data.feature.name,
+        totalTasks: data.plan.tasks.length,
+        completedTasks: data.plan.tasks.filter(t => {
+          // Need to match with prefixed ID since tasks in completedTasks have feature prefix
+          const prefixedId = `${id}-${t.id}`;
+          return this.orchestration.completedTasks.some(ct => ct.id === prefixedId);
+        }).length
+      }))
     };
   }
 
@@ -587,12 +766,70 @@ class CoordinatorAgent extends BaseAgent {
       ...super.serialize(),
       orchestration: {
         projectPlan: this.orchestration.projectPlan,
+        features: this.orchestration.features,
+        featureCoordinators: Array.from(this.orchestration.featureCoordinators.entries()).map(([id, data]) => ({
+          featureId: id,
+          feature: data.feature,
+          plan: data.plan,
+          coordinatorState: data.coordinator?.serialize() || null
+        })),
         taskQueue: this.orchestration.taskQueue,
         completedTasks: this.orchestration.completedTasks,
         failedTasks: this.orchestration.failedTasks,
         fileAllocation: Array.from(this.orchestration.fileAllocation.entries())
       }
     };
+  }
+
+  /**
+   * Restore coordinator state from checkpoint
+   * @param {Object} state - Saved state from checkpoint
+   */
+  restore(state) {
+    // Call parent restore for basic agent fields
+    super.restore(state);
+
+    // Restore orchestration state
+    if (state.orchestration) {
+      this.orchestration.projectPlan = state.orchestration.projectPlan || null;
+      this.orchestration.features = state.orchestration.features || [];
+      this.orchestration.taskQueue = state.orchestration.taskQueue || [];
+      this.orchestration.completedTasks = state.orchestration.completedTasks || [];
+      this.orchestration.failedTasks = state.orchestration.failedTasks || [];
+
+      // Reconstruct fileAllocation Map
+      if (state.orchestration.fileAllocation) {
+        this.orchestration.fileAllocation = new Map(state.orchestration.fileAllocation);
+      }
+
+      // Restore feature coordinators (plans and features, not coordinator instances)
+      // Coordinator instances will be recreated if needed
+      if (state.orchestration.featureCoordinators) {
+        this.orchestration.featureCoordinators.clear();
+
+        for (const fcData of state.orchestration.featureCoordinators) {
+          this.orchestration.featureCoordinators.set(fcData.featureId, {
+            coordinator: null,  // Don't restore instances, will be recreated if needed
+            plan: fcData.plan,
+            feature: fcData.feature
+          });
+        }
+      }
+
+      console.log(`[${this.agentId}] Restored coordinator state:`);
+      console.log(`  - Features: ${this.orchestration.features.length}`);
+      console.log(`  - Feature coordinators: ${this.orchestration.featureCoordinators.size}`);
+      console.log(`  - Pending tasks: ${this.orchestration.taskQueue.length}`);
+      console.log(`  - Completed tasks: ${this.orchestration.completedTasks.length}`);
+      console.log(`  - Failed tasks: ${this.orchestration.failedTasks.length}`);
+    }
+
+    this.emit('coordinatorRestored', {
+      features: this.orchestration.features.length,
+      pendingTasks: this.orchestration.taskQueue.length,
+      completedTasks: this.orchestration.completedTasks.length,
+      timestamp: Date.now()
+    });
   }
 }
 

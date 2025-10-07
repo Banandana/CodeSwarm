@@ -18,7 +18,7 @@ class BaseAgent extends EventEmitter {
 
     this.config = {
       maxConcurrentTasks: options.maxConcurrentTasks || 1,
-      heartbeatInterval: options.heartbeatInterval || 60000, // 60 seconds (increased to reduce queue pressure)
+      heartbeatInterval: options.heartbeatInterval || 0, // DISABLED by default (0 = disabled)
       taskTimeout: options.taskTimeout || 300000, // 5 minutes
       retryAttempts: options.retryAttempts || 3,
       retryDelay: options.retryDelay || 1000
@@ -33,8 +33,12 @@ class BaseAgent extends EventEmitter {
       conversationHistory: []
     };
 
-    // Start heartbeat
-    this._startHeartbeat();
+    // Start heartbeat only if enabled (0 = disabled)
+    // NOTE: Heartbeats disabled by default to prevent message queue saturation
+    // with 10+ concurrent agents. Enable with heartbeatInterval > 0 if needed.
+    if (this.config.heartbeatInterval > 0) {
+      this._startHeartbeat();
+    }
   }
 
   /**
@@ -340,23 +344,23 @@ class BaseAgent extends EventEmitter {
    */
   parseClaudeJSON(content) {
     try {
-      let jsonStr = content;
+      // Clean up the content first
+      let cleanContent = content.trim();
+      let jsonStr = cleanContent;
 
-      // Try multiple patterns to extract JSON from markdown
+      // Strategy 1: Try regex patterns with proper extraction
       const patterns = [
-        /```json\s*([\s\S]*?)\s*```/,  // ```json ... ```
-        /```\s*([\s\S]*?)\s*```/,       // ``` ... ```
-        /(\{[\s\S]*\})/                 // Just find the JSON object
+        /```json\s*\n([\s\S]*?)\n```/,  // ```json\n...\n```
+        /```json\s+([\s\S]*?)\s*```/,   // ```json ...\n```
+        /```\s*\n([\s\S]*?)\n```/,      // ```\n...\n```
+        /```\s+([\s\S]*?)\s*```/        // ``` ...\n```
       ];
 
       for (const pattern of patterns) {
-        const match = content.match(pattern);
-        if (match) {
-          jsonStr = match[1] || match[0];
-
-          // Try to parse this candidate
+        const match = cleanContent.match(pattern);
+        if (match && match[1]) {
           try {
-            return JSON.parse(jsonStr.trim());
+            return JSON.parse(match[1].trim());
           } catch (e) {
             // This pattern didn't work, try next
             continue;
@@ -364,8 +368,26 @@ class BaseAgent extends EventEmitter {
         }
       }
 
-      // If all patterns failed, try the raw content
-      return JSON.parse(content.trim());
+      // Strategy 2: Remove code fences with string replacement
+      jsonStr = cleanContent
+        .replace(/^```json\s*\n?/i, '')
+        .replace(/^```\s*\n?/, '')
+        .replace(/\n?```\s*$/, '')
+        .trim();
+
+      // Try to parse the cleaned string
+      try {
+        return JSON.parse(jsonStr);
+      } catch (e) {
+        // Strategy 3: Find JSON object boundaries
+        const jsonMatch = cleanContent.match(/(\{[\s\S]*\})/);
+        if (jsonMatch) {
+          return JSON.parse(jsonMatch[1].trim());
+        }
+      }
+
+      // Strategy 4: Last resort - try raw content
+      return JSON.parse(cleanContent);
 
     } catch (error) {
       // Log full response for debugging
@@ -469,11 +491,15 @@ class BaseAgent extends EventEmitter {
     try {
       return await operation();
     } catch (error) {
+      console.error(`[${this.agentId}] Operation failed (attempt ${attempt}/${this.config.retryAttempts}):`, error.message);
+
       if (attempt >= this.config.retryAttempts) {
+        console.error(`[${this.agentId}] Max retries reached, failing operation`);
         throw error;
       }
 
       const delay = this.config.retryDelay * Math.pow(2, attempt - 1);
+      console.log(`[${this.agentId}] Retrying in ${delay}ms...`);
       await new Promise(resolve => setTimeout(resolve, delay));
 
       return this.retryWithBackoff(operation, attempt + 1);

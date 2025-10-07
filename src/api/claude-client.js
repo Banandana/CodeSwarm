@@ -20,7 +20,7 @@ class ClaudeClient {
       model: config.model || process.env.CLAUDE_MODEL || 'claude-3-sonnet-20240229',
       maxTokens: config.maxTokens || 4000,
       temperature: config.temperature || 0.7,
-      timeout: config.timeout || 60000
+      timeout: config.timeout || 600000  // 10 minutes for very complex responses
     };
 
     // Cost tracking (approximate, adjust based on actual pricing)
@@ -78,9 +78,10 @@ class ClaudeClient {
 
       console.log(`[ClaudeClient] Making API call (model: ${request.model}, max_tokens: ${request.max_tokens})...`);
 
-      // Make API call with timeout protection
+      // Make API call with timeout protection (3 minutes for complex responses)
+      const timeoutMs = this.config.timeout;
       const apiTimeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Claude API timeout after 60s')), 60000)
+        setTimeout(() => reject(new Error(`Claude API timeout after ${timeoutMs/1000}s`)), timeoutMs)
       );
 
       const response = await Promise.race([
@@ -217,9 +218,10 @@ class ClaudeClient {
       let inputTokens = 0;
       let outputTokens = 0;
 
-      // Make API call with timeout protection
+      // Make API call with timeout protection (use configured timeout)
+      const timeoutMs = this.config.timeout;
       const apiTimeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Claude API stream timeout after 60s')), 60000)
+        setTimeout(() => reject(new Error(`Claude API stream timeout after ${timeoutMs/1000}s`)), timeoutMs)
       );
 
       const stream = await Promise.race([

@@ -314,11 +314,11 @@ class CommunicationHub extends EventEmitter {
       // Emit the request event
       this.emit('CLAUDE_REQUEST', message);
 
-      // Timeout after 2 minutes
+      // Timeout after 10 minutes for complex responses
       timeoutId = setTimeout(() => {
         cleanup();
         reject(new Error('Claude request timed out'));
-      }, 120000);
+      }, 600000);
     });
   }
 
@@ -529,19 +529,22 @@ class CommunicationHub extends EventEmitter {
   /**
    * Process message queue
    * @private
+   *
+   * NOTE: This implementation deviates from IMPLEMENTATION.md lines 542-543.
+   * Original spec had a blocking `this.processing` flag that prevented concurrent
+   * message processing, contradicting the intent of `maxConcurrentOperations`.
+   * This fix enables true concurrent processing for scalability with 10+ agents.
    */
   async _processMessageQueue() {
-    if (this.processing || this.messageQueue.length === 0) {
+    if (this.messageQueue.length === 0) {
       return;
     }
 
-    if (this.activeOperations.size >= this.options.maxConcurrentOperations) {
-      return;
-    }
-
-    this.processing = true;
-
-    try {
+    // Process multiple messages concurrently up to maxConcurrentOperations
+    while (
+      this.messageQueue.length > 0 &&
+      this.activeOperations.size < this.options.maxConcurrentOperations
+    ) {
       // Sort by priority and timestamp
       this.messageQueue.sort((a, b) => {
         if (a.priority !== b.priority) {
@@ -553,7 +556,7 @@ class CommunicationHub extends EventEmitter {
       const message = this.messageQueue.shift();
 
       if (!message) {
-        return;
+        break;
       }
 
       // Check timeout
@@ -563,19 +566,20 @@ class CommunicationHub extends EventEmitter {
           pending.reject(new TimeoutError(`Message ${message.id} timed out`));
           this.pendingResponses.delete(message.id);
         }
-        return;
+        continue;
       }
 
-      // Process message synchronously to prevent duplicate processing
-      await this._processMessage(message);
+      // Process message concurrently - fire and forget
+      // Errors are handled within _processMessage
+      this._processMessage(message).catch(error => {
+        // Error already logged in _processMessage
+        // This catch prevents unhandled promise rejections
+      });
+    }
 
-    } finally {
-      this.processing = false;
-
-      // Continue processing
-      if (this.messageQueue.length > 0) {
-        setImmediate(() => this._processMessageQueue());
-      }
+    // Continue processing if queue has more messages
+    if (this.messageQueue.length > 0) {
+      setImmediate(() => this._processMessageQueue());
     }
   }
 
