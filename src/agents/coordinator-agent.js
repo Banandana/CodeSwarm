@@ -42,7 +42,7 @@ class CoordinatorAgent extends BaseAgent {
     // Add error handler to prevent crashes on unhandled errors
     // This is critical for long-running agent processes
     this.on('error', (error) => {
-      console.error(`[${this.agentId}] Error:`, error.message);
+      this.logger.agent(this.agentId, "error", `[${this.agentId}] Error:`, error.message);
       // Log but continue - don't crash the system
     });
   }
@@ -129,7 +129,7 @@ class CoordinatorAgent extends BaseAgent {
    * @returns {Promise<Array>} Array of validated specifications
    */
   async generateSpecificationsV2(projectContext = {}) {
-    console.log(`[${this.agentId}] Using NEW specification system for ${this.orchestration.features.length} features`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Using NEW specification system for ${this.orchestration.features.length} features`);
 
     const SpecificationSystemV2 = require('./specification-v2');
     const qualityGate = new (require('../validation/spec-quality-gate'))();
@@ -153,7 +153,7 @@ class CoordinatorAgent extends BaseAgent {
 
           // Use existing quality gate
           const quality = await qualityGate.validateSpec(spec);
-          console.log(`[${this.agentId}] Spec quality: ${quality.overallScore}/100`);
+          this.logger.agent(this.agentId, "debug", `[${this.agentId}] Spec quality: ${quality.overallScore}/100`);
 
           if (quality.recommendation === 'accept') {
             specifications.push(spec);
@@ -163,9 +163,9 @@ class CoordinatorAgent extends BaseAgent {
           }
 
         } catch (error) {
-          console.error(`[${this.agentId}] Spec generation failed:`, error.message);
+          this.logger.agent(this.agentId, "error", `[${this.agentId}] Spec generation failed:`, error.message);
           if (attempts >= maxAttempts) {
-            console.warn(`[${this.agentId}] Falling back to legacy system for ${feature.name}`);
+            this.logger.agent(this.agentId, "warn", `[${this.agentId}] Falling back to legacy system for ${feature.name}`);
             // Fallback to legacy for this feature
             const SpecificationAgent = require('./specification-agent');
             const legacyAgent = new SpecificationAgent('spec-fallback', this.communicationHub);
@@ -178,7 +178,7 @@ class CoordinatorAgent extends BaseAgent {
       }
     }
 
-    console.log(`[${this.agentId}] Generated ${specifications.length} specifications with new system`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Generated ${specifications.length} specifications with new system`);
     return specifications;
   }
 
@@ -193,7 +193,7 @@ class CoordinatorAgent extends BaseAgent {
     }
 
     // ... existing implementation continues unchanged
-    console.log(`[${this.agentId}] Using LEGACY specification system for ${this.orchestration.features.length} features`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Using LEGACY specification system for ${this.orchestration.features.length} features`);
 
     const SpecificationAgent = require('./specification-agent');
     const SpecificationQualityGate = require('../validation/spec-quality-gate');
@@ -212,40 +212,40 @@ class CoordinatorAgent extends BaseAgent {
       while (attempts < maxAttempts) {
         try {
           // Generate spec
-          console.log(`[${this.agentId}] Generating spec for ${feature.name} (attempt ${attempts + 1})`);
+          this.logger.agent(this.agentId, "debug", `[${this.agentId}] Generating spec for ${feature.name} (attempt ${attempts + 1})`);
           spec = await specAgent.generateSpecification(feature, {
             ...projectContext,
             existingSpecs: specifications
           });
 
           // Quality gate validation
-          console.log(`[${this.agentId}] Validating spec quality for ${spec.specId}`);
+          this.logger.agent(this.agentId, "debug", `[${this.agentId}] Validating spec quality for ${spec.specId}`);
           const quality = await qualityGate.validateSpec(spec);
 
-          console.log(`[${this.agentId}] Spec quality: ${quality.overallScore}/100 (${quality.recommendation})`);
+          this.logger.agent(this.agentId, "debug", `[${this.agentId}] Spec quality: ${quality.overallScore}/100 (${quality.recommendation})`);
 
           if (quality.passed) {
             // Spec is good!
-            console.log(`[${this.agentId}] ✓ Spec passed quality gate: ${spec.specId}`);
+            this.logger.agent(this.agentId, "debug", `[${this.agentId}] ✓ Spec passed quality gate: ${spec.specId}`);
             break;
           } else if (quality.recommendation === 'revise' && attempts < maxAttempts - 1) {
             // Try to fix spec with feedback
-            console.log(`[${this.agentId}] Revising spec based on quality feedback`);
+            this.logger.agent(this.agentId, "debug", `[${this.agentId}] Revising spec based on quality feedback`);
             spec = await specAgent.reviseSpecification(spec, quality.checks);
             attempts++;
           } else {
             // Regenerate from scratch
-            console.log(`[${this.agentId}] Regenerating spec from scratch`);
+            this.logger.agent(this.agentId, "debug", `[${this.agentId}] Regenerating spec from scratch`);
             spec = null; // Will regenerate
             attempts++;
           }
         } catch (error) {
-          console.error(`[${this.agentId}] Spec generation failed for ${feature.name}:`, error.message);
+          this.logger.agent(this.agentId, "error", `[${this.agentId}] Spec generation failed for ${feature.name}:`, error.message);
           attempts++;
 
           if (attempts >= maxAttempts) {
             // Give up, continue without spec
-            console.warn(`[${this.agentId}] Could not generate quality spec for ${feature.name} after ${maxAttempts} attempts`);
+            this.logger.agent(this.agentId, "warn", `[${this.agentId}] Could not generate quality spec for ${feature.name} after ${maxAttempts} attempts`);
             spec = {
               specId: null,
               featureId: feature.id,
@@ -267,7 +267,7 @@ class CoordinatorAgent extends BaseAgent {
     // Store specs in orchestration
     this.orchestration.specifications = specifications;
 
-    console.log(`[${this.agentId}] Generated ${specifications.filter(s => s.specId).length}/${specifications.length} specifications`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Generated ${specifications.filter(s => s.specId).length}/${specifications.length} specifications`);
 
     return specifications;
   }
@@ -280,11 +280,11 @@ class CoordinatorAgent extends BaseAgent {
     const ENABLE_ARCHITECTURE = process.env.ENABLE_ARCHITECTURE !== 'false'; // Default to enabled
 
     if (!ENABLE_ARCHITECTURE) {
-      console.log(`[${this.agentId}] Architecture generation disabled, skipping`);
+      this.logger.agent(this.agentId, "debug", `[${this.agentId}] Architecture generation disabled, skipping`);
       return null;
     }
 
-    console.log(`[${this.agentId}] Generating system architecture`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Generating system architecture`);
 
     const ArchitecturalDesignAgent = require('./architectural-design-agent');
     const ArchitectureQualityGate = require('../validation/architecture-quality-gate');
@@ -301,36 +301,36 @@ class CoordinatorAgent extends BaseAgent {
     while (attempts < maxAttempts) {
       try {
         // Generate architecture
-        console.log(`[${this.agentId}] Architecture generation attempt ${attempts + 1}/${maxAttempts}`);
+        this.logger.agent(this.agentId, "debug", `[${this.agentId}] Architecture generation attempt ${attempts + 1}/${maxAttempts}`);
         architecture = await archAgent.designArchitecture(
           this.orchestration.projectPlan,
           this.orchestration.features
         );
 
         // Validate architecture quality
-        console.log(`[${this.agentId}] Validating architecture quality`);
+        this.logger.agent(this.agentId, "debug", `[${this.agentId}] Validating architecture quality`);
         const quality = await qualityGate.validate(architecture);
 
-        console.log(`[${this.agentId}] Architecture quality: Score=${quality.overallScore}, Passed=${quality.passed}`);
+        this.logger.agent(this.agentId, "debug", `[${this.agentId}] Architecture quality: Score=${quality.overallScore}, Passed=${quality.passed}`);
 
         if (quality.passed) {
-          console.log(`[${this.agentId}] ✓ Architecture passed quality gate`);
+          this.logger.agent(this.agentId, "debug", `[${this.agentId}] ✓ Architecture passed quality gate`);
           break;
         } else if (quality.recommendation === 'revise' && attempts < maxAttempts - 1) {
-          console.log(`[${this.agentId}] Revising architecture based on quality feedback`);
+          this.logger.agent(this.agentId, "debug", `[${this.agentId}] Revising architecture based on quality feedback`);
           architecture = await archAgent.reviseArchitecture(architecture, quality.issues);
           attempts++;
         } else {
-          console.log(`[${this.agentId}] Regenerating architecture from scratch`);
+          this.logger.agent(this.agentId, "debug", `[${this.agentId}] Regenerating architecture from scratch`);
           architecture = null; // Will regenerate
           attempts++;
         }
       } catch (error) {
-        console.error(`[${this.agentId}] Architecture generation failed:`, error.message);
+        this.logger.agent(this.agentId, "error", `[${this.agentId}] Architecture generation failed:`, error.message);
         attempts++;
 
         if (attempts >= maxAttempts) {
-          console.warn(`[${this.agentId}] Could not generate quality architecture after ${maxAttempts} attempts, using fallback`);
+          this.logger.agent(this.agentId, "warn", `[${this.agentId}] Could not generate quality architecture after ${maxAttempts} attempts, using fallback`);
           // Use a minimal fallback architecture
           architecture = this._createFallbackArchitecture();
         }
@@ -343,7 +343,7 @@ class CoordinatorAgent extends BaseAgent {
     // Save to state for other agents
     if (architecture) {
       await this.writeState('architecture:current', architecture);
-      console.log(`[${this.agentId}] Architecture saved to state: ${architecture.architectureId}`);
+      this.logger.agent(this.agentId, "debug", `[${this.agentId}] Architecture saved to state: ${architecture.architectureId}`);
     }
 
     return architecture;
@@ -360,7 +360,7 @@ class CoordinatorAgent extends BaseAgent {
 
     const plan = this.orchestration.projectPlan;
 
-    console.log(`[${this.agentId}] Starting execution with ${this.orchestration.features.length} features`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Starting execution with ${this.orchestration.features.length} features`);
 
     this.emit('executionStarted', {
       totalFeatures: this.orchestration.features.length,
@@ -377,7 +377,7 @@ class CoordinatorAgent extends BaseAgent {
           const ConstraintEngine = require('../constraints/constraint-engine');
           this.constraintEngine = new ConstraintEngine();
           this.constraintEngine.loadConstraints(architecture);
-          console.log(`[${this.agentId}] Loaded architectural constraints`);
+          this.logger.agent(this.agentId, "debug", `[${this.agentId}] Loaded architectural constraints`);
         }
       }
 
@@ -398,7 +398,7 @@ class CoordinatorAgent extends BaseAgent {
         // Build unified task queue from all feature tasks
         this._buildTaskQueue(plan);
       } else {
-        console.log(`[${this.agentId}] Using existing feature plans from checkpoint (${this.orchestration.featureCoordinators.size} features)`);
+        this.logger.agent(this.agentId, "debug", `[${this.agentId}] Using existing feature plans from checkpoint (${this.orchestration.featureCoordinators.size} features)`);
       }
 
       // Process tasks according to dependency graph
@@ -473,7 +473,7 @@ class CoordinatorAgent extends BaseAgent {
    * @private
    */
   async _planFeatures() {
-    console.log(`[${this.agentId}] Planning ${this.orchestration.features.length} features in parallel`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Planning ${this.orchestration.features.length} features in parallel`);
 
     // Spawn feature coordinators for all features
     const planningPromises = this.orchestration.features.map(async (feature) => {
@@ -486,9 +486,9 @@ class CoordinatorAgent extends BaseAgent {
     // Check for failures
     const failures = results.filter(r => r.status === 'rejected');
     if (failures.length > 0) {
-      console.error(`[${this.agentId}] ${failures.length} features failed to plan`);
+      this.logger.agent(this.agentId, "error", `[${this.agentId}] ${failures.length} features failed to plan`);
       failures.forEach((f, i) => {
-        console.error(`  Feature ${i}: ${f.reason}`);
+        this.logger.agent(this.agentId, "error", `  Feature ${i}: ${f.reason}`);
       });
       throw new AgentError(
         `Failed to plan ${failures.length} features`,
@@ -496,7 +496,7 @@ class CoordinatorAgent extends BaseAgent {
       );
     }
 
-    console.log(`[${this.agentId}] All ${this.orchestration.features.length} features planned successfully`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] All ${this.orchestration.features.length} features planned successfully`);
   }
 
   /**
@@ -508,7 +508,7 @@ class CoordinatorAgent extends BaseAgent {
     // Use feature ID + timestamp + random string for guaranteed uniqueness
     const coordinatorId = `feature-coord-${feature.id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-    console.log(`[${this.agentId}] Spawning coordinator for feature: ${feature.name}`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Spawning coordinator for feature: ${feature.name}`);
 
     const coordinator = new FeatureCoordinatorAgent(
       coordinatorId,
@@ -531,7 +531,7 @@ class CoordinatorAgent extends BaseAgent {
       feature
     });
 
-    console.log(`[${this.agentId}] Feature ${feature.name} planned: ${plan.tasks.length} tasks`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Feature ${feature.name} planned: ${plan.tasks.length} tasks`);
 
     return plan;
   }
@@ -557,7 +557,7 @@ class CoordinatorAgent extends BaseAgent {
       allTasks.push(...prefixedTasks);
     }
 
-    console.log(`[${this.agentId}] Collected ${allTasks.length} tasks from ${this.orchestration.featureCoordinators.size} features`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Collected ${allTasks.length} tasks from ${this.orchestration.featureCoordinators.size} features`);
 
     // Handle feature-level dependencies
     if (plan.featureDependencies && plan.featureDependencies.sequential) {
@@ -580,7 +580,7 @@ class CoordinatorAgent extends BaseAgent {
         }
         firstTargetTask.dependencies.push(lastSourceTask.id);
 
-        console.log(`[${this.agentId}] Added feature dependency: ${targetFeatureId} depends on ${sourceFeatureId}`);
+        this.logger.agent(this.agentId, "debug", `[${this.agentId}] Added feature dependency: ${targetFeatureId} depends on ${sourceFeatureId}`);
       }
     }
 
@@ -879,7 +879,7 @@ class CoordinatorAgent extends BaseAgent {
     const attemptCount = this.recoveryCircuitBreaker.attemptsByTask.get(task.id) || 0;
 
     if (attemptCount >= this.recoveryCircuitBreaker.maxAttempts) {
-      console.error(`[${this.agentId}] Circuit breaker open for task ${task.id} (${attemptCount} attempts)`);
+      this.logger.agent(this.agentId, "error", `[${this.agentId}] Circuit breaker open for task ${task.id} (${attemptCount} attempts)`);
       this.emit('circuitBreakerOpen', {
         taskId: task.id,
         attemptCount,
@@ -924,7 +924,7 @@ class CoordinatorAgent extends BaseAgent {
       };
 
     } catch (recoveryError) {
-      console.error(`[${this.agentId}] Recovery attempt failed for task ${task.id}:`, recoveryError.message);
+      this.logger.agent(this.agentId, "error", `[${this.agentId}] Recovery attempt failed for task ${task.id}:`, recoveryError.message);
       return { success: false, reason: 'recovery_error', error: recoveryError.message };
     }
   }
@@ -1031,8 +1031,8 @@ class CoordinatorAgent extends BaseAgent {
 
     } catch (error) {
       // Provide detailed error info for debugging
-      console.error('[CoordinatorAgent] JSON Parse Error:', error.message);
-      console.error('[CoordinatorAgent] Content sample:', content.substring(0, 500));
+      this.logger.agent(this.agentId, "error", '[CoordinatorAgent] JSON Parse Error:', error.message);
+      this.logger.agent(this.agentId, "error", '[CoordinatorAgent] Content sample:', content.substring(0, 500));
 
       throw new AgentError(
         `Failed to parse Claude response: ${error.message}`,
@@ -1198,12 +1198,12 @@ class CoordinatorAgent extends BaseAgent {
         }
       }
 
-      console.log(`[${this.agentId}] Restored coordinator state:`);
-      console.log(`  - Features: ${this.orchestration.features.length}`);
-      console.log(`  - Feature coordinators: ${this.orchestration.featureCoordinators.size}`);
-      console.log(`  - Pending tasks: ${this.orchestration.taskQueue.length}`);
-      console.log(`  - Completed tasks: ${this.orchestration.completedTasks.length}`);
-      console.log(`  - Failed tasks: ${this.orchestration.failedTasks.length}`);
+      this.logger.agent(this.agentId, "debug", `[${this.agentId}] Restored coordinator state:`);
+      this.logger.agent(this.agentId, "debug", `  - Features: ${this.orchestration.features.length}`);
+      this.logger.agent(this.agentId, "debug", `  - Feature coordinators: ${this.orchestration.featureCoordinators.size}`);
+      this.logger.agent(this.agentId, "debug", `  - Pending tasks: ${this.orchestration.taskQueue.length}`);
+      this.logger.agent(this.agentId, "debug", `  - Completed tasks: ${this.orchestration.completedTasks.length}`);
+      this.logger.agent(this.agentId, "debug", `  - Failed tasks: ${this.orchestration.failedTasks.length}`);
     }
 
     // Restore circuit breaker state
@@ -1226,7 +1226,7 @@ class CoordinatorAgent extends BaseAgent {
    * @returns {Promise<void>}
    */
   async shutdown() {
-    console.log(`[${this.agentId}] Shutting down coordinator...`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Shutting down coordinator...`);
 
     // Shutdown all feature coordinators
     for (const [featureId, featureData] of this.orchestration.featureCoordinators) {
@@ -1234,7 +1234,7 @@ class CoordinatorAgent extends BaseAgent {
         try {
           await featureData.coordinator.shutdown();
         } catch (error) {
-          console.error(`[${this.agentId}] Error shutting down feature coordinator ${featureId}:`, error.message);
+          this.logger.agent(this.agentId, "error", `[${this.agentId}] Error shutting down feature coordinator ${featureId}:`, error.message);
         }
       }
     }
@@ -1244,7 +1244,7 @@ class CoordinatorAgent extends BaseAgent {
       try {
         await agent.shutdown();
       } catch (error) {
-        console.error(`[${this.agentId}] Error shutting down ${agentType} agent:`, error.message);
+        this.logger.agent(this.agentId, "error", `[${this.agentId}] Error shutting down ${agentType} agent:`, error.message);
       }
     }
 
@@ -1256,7 +1256,7 @@ class CoordinatorAgent extends BaseAgent {
     // Call parent shutdown
     await super.shutdown();
 
-    console.log(`[${this.agentId}] Coordinator shutdown complete`);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Coordinator shutdown complete`);
   }
 }
 

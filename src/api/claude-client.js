@@ -7,10 +7,12 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { v4: uuidv4 } = require('uuid');
 const { APIError } = require('../utils/errors');
 const Validator = require('../utils/validation');
+const { getLogger } = require('../core/logging/logger');
 
 class ClaudeClient {
   constructor(budgetManager, config = {}) {
     this.budgetManager = budgetManager;
+    this.logger = config.logger || getLogger();
 
     this.client = new Anthropic({
       apiKey: config.apiKey || process.env.CLAUDE_API_KEY
@@ -42,7 +44,7 @@ class ClaudeClient {
    * @returns {Promise<Object>}
    */
   async sendMessage(messages, agentId, options = {}) {
-    console.log(`[ClaudeClient] sendMessage called:`, {
+    this.logger.debug(`[ClaudeClient] sendMessage called:`, {
       agentId,
       messageCount: messages.length,
       hasSystemPrompt: !!options.systemPrompt,
@@ -55,10 +57,10 @@ class ClaudeClient {
 
     // Always create new operationId for budget tracking
     const operationId = uuidv4();
-    console.log(`[ClaudeClient] Operation ID generated:`, operationId);
+    this.logger.debug(`[ClaudeClient] Operation ID generated:`, operationId);
 
     const estimatedCost = this._estimateCost(messages, options);
-    console.log(`[ClaudeClient] Cost estimation calculated:`, {
+    this.logger.debug(`[ClaudeClient] Cost estimation calculated:`, {
       operationId,
       estimatedCost: estimatedCost.toFixed(6),
       model: options.model || this.config.model,
@@ -67,7 +69,7 @@ class ClaudeClient {
 
     try {
       // Always validate budget for this specific operation
-      console.log(`[ClaudeClient] Budget validation starting:`, {
+      this.logger.debug(`[ClaudeClient] Budget validation starting:`, {
         operationId,
         estimatedCost: estimatedCost.toFixed(4),
         agentId,
@@ -82,7 +84,7 @@ class ClaudeClient {
         options.priority || 'MEDIUM'
       );
 
-      console.log(`[ClaudeClient] Budget validation passed:`, {
+      this.logger.debug(`[ClaudeClient] Budget validation passed:`, {
         operationId,
         agentId
       });
@@ -102,7 +104,7 @@ class ClaudeClient {
         request.system = options.systemPrompt;
       }
 
-      console.log(`[ClaudeClient] API request prepared:`, {
+      this.logger.debug(`[ClaudeClient] API request prepared:`, {
         operationId,
         model: request.model,
         max_tokens: request.max_tokens,
@@ -113,7 +115,7 @@ class ClaudeClient {
 
       // Make API call with timeout protection (3 minutes for complex responses)
       const timeoutMs = this.config.timeout;
-      console.log(`[ClaudeClient] Request timeout configured:`, {
+      this.logger.debug(`[ClaudeClient] Request timeout configured:`, {
         operationId,
         timeoutMs,
         timeoutSeconds: timeoutMs / 1000
@@ -123,7 +125,7 @@ class ClaudeClient {
         setTimeout(() => reject(new Error(`Claude API timeout after ${timeoutMs/1000}s`)), timeoutMs)
       );
 
-      console.log(`[ClaudeClient] Starting API call:`, {
+      this.logger.debug(`[ClaudeClient] Starting API call:`, {
         operationId,
         timestamp: new Date().toISOString()
       });
@@ -134,7 +136,7 @@ class ClaudeClient {
       ]);
 
       const duration = Date.now() - startTime;
-      console.log(`[ClaudeClient] API call completed:`, {
+      this.logger.debug(`[ClaudeClient] API call completed:`, {
         operationId,
         duration,
         durationSeconds: (duration / 1000).toFixed(2)
@@ -150,7 +152,7 @@ class ClaudeClient {
       const variance = actualCost - estimatedCost;
       const variancePercent = estimatedCost > 0 ? ((variance / estimatedCost) * 100).toFixed(2) : 0;
 
-      console.log(`[ClaudeClient] Response processing:`, {
+      this.logger.debug(`[ClaudeClient] Response processing:`, {
         operationId,
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
@@ -164,15 +166,27 @@ class ClaudeClient {
 
       const responseTime = Date.now() - startTime;
 
+      // Log API call for tracking
+      this.logger.apiCall({
+        operation: 'sendMessage',
+        agentId,
+        operationId,
+        model: request.model,
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        cost: actualCost,
+        duration: responseTime
+      });
+
       // Record actual usage
-      console.log(`[ClaudeClient] Recording usage:`, {
+      this.logger.debug(`[ClaudeClient] Recording usage:`, {
         operationId,
         actualCost: actualCost.toFixed(6)
       });
 
       await this.budgetManager.recordUsage(operationId, actualCost);
 
-      console.log(`[ClaudeClient] Usage recorded successfully:`, {
+      this.logger.debug(`[ClaudeClient] Usage recorded successfully:`, {
         operationId
       });
 
@@ -182,7 +196,7 @@ class ClaudeClient {
         .map(block => block.text)
         .join('\n');
 
-      console.log(`[ClaudeClient] Request completed successfully:`, {
+      this.logger.debug(`[ClaudeClient] Request completed successfully:`, {
         operationId,
         agentId,
         totalDuration: responseTime,
@@ -211,7 +225,7 @@ class ClaudeClient {
 
     } catch (error) {
       // Log error for debugging
-      console.error(`[ClaudeClient] Error in sendMessage:`, {
+      this.logger.error(`[ClaudeClient] Error in sendMessage:`, {
         operationId,
         agentId,
         error: error.message,
@@ -221,17 +235,17 @@ class ClaudeClient {
       });
 
       // Clean up budget reservation on failure
-      console.log(`[ClaudeClient] Attempting budget cleanup:`, {
+      this.logger.debug(`[ClaudeClient] Attempting budget cleanup:`, {
         operationId
       });
 
       try {
         await this.budgetManager.releaseReservation(operationId);
-        console.log(`[ClaudeClient] Budget reservation released:`, {
+        this.logger.debug(`[ClaudeClient] Budget reservation released:`, {
           operationId
         });
       } catch (cleanupError) {
-        console.error(`[ClaudeClient] Failed to release reservation:`, {
+        this.logger.error(`[ClaudeClient] Failed to release reservation:`, {
           operationId,
           cleanupError: cleanupError.message
         });
@@ -239,7 +253,7 @@ class ClaudeClient {
 
       // Handle specific API errors
       if (error.status === 429) {
-        console.error(`[ClaudeClient] Rate limit exceeded:`, {
+        this.logger.error(`[ClaudeClient] Rate limit exceeded:`, {
           operationId,
           agentId,
           retryAfter: error.headers?.['retry-after']
@@ -252,7 +266,7 @@ class ClaudeClient {
       }
 
       if (error.status === 401) {
-        console.error(`[ClaudeClient] Invalid API key:`, {
+        this.logger.error(`[ClaudeClient] Invalid API key:`, {
           operationId,
           agentId
         });
@@ -262,7 +276,7 @@ class ClaudeClient {
         });
       }
 
-      console.error(`[ClaudeClient] Throwing APIError:`, {
+      this.logger.error(`[ClaudeClient] Throwing APIError:`, {
         operationId,
         agentId,
         statusCode: error.status
@@ -289,7 +303,7 @@ class ClaudeClient {
    * @returns {Promise<Object>}
    */
   async streamMessage(messages, agentId, onChunk, options = {}) {
-    console.log(`[ClaudeClient] streamMessage called:`, {
+    this.logger.debug(`[ClaudeClient] streamMessage called:`, {
       agentId,
       messageCount: messages.length,
       hasSystemPrompt: !!options.systemPrompt,
@@ -298,10 +312,10 @@ class ClaudeClient {
 
     // Always create new operationId for budget tracking
     const operationId = uuidv4();
-    console.log(`[ClaudeClient] Stream operation ID generated:`, operationId);
+    this.logger.debug(`[ClaudeClient] Stream operation ID generated:`, operationId);
 
     const estimatedCost = this._estimateCost(messages, options);
-    console.log(`[ClaudeClient] Stream cost estimation:`, {
+    this.logger.debug(`[ClaudeClient] Stream cost estimation:`, {
       operationId,
       estimatedCost: estimatedCost.toFixed(6),
       model: options.model || this.config.model
@@ -309,7 +323,7 @@ class ClaudeClient {
 
     try {
       // Always validate budget for this specific operation
-      console.log(`[ClaudeClient] Stream budget validation starting:`, {
+      this.logger.debug(`[ClaudeClient] Stream budget validation starting:`, {
         operationId,
         estimatedCost: estimatedCost.toFixed(4),
         agentId,
@@ -323,7 +337,7 @@ class ClaudeClient {
         options.priority || 'MEDIUM'
       );
 
-      console.log(`[ClaudeClient] Stream budget validation passed:`, {
+      this.logger.debug(`[ClaudeClient] Stream budget validation passed:`, {
         operationId
       });
 
@@ -342,7 +356,7 @@ class ClaudeClient {
         request.system = options.systemPrompt;
       }
 
-      console.log(`[ClaudeClient] Stream request prepared:`, {
+      this.logger.debug(`[ClaudeClient] Stream request prepared:`, {
         operationId,
         model: request.model,
         max_tokens: request.max_tokens,
@@ -357,7 +371,7 @@ class ClaudeClient {
 
       // Make API call with timeout protection (use configured timeout)
       const timeoutMs = this.config.timeout;
-      console.log(`[ClaudeClient] Stream timeout configured:`, {
+      this.logger.debug(`[ClaudeClient] Stream timeout configured:`, {
         operationId,
         timeoutMs,
         timeoutSeconds: timeoutMs / 1000
@@ -367,7 +381,7 @@ class ClaudeClient {
         setTimeout(() => reject(new Error(`Claude API stream timeout after ${timeoutMs/1000}s`)), timeoutMs)
       );
 
-      console.log(`[ClaudeClient] Starting stream API call:`, {
+      this.logger.debug(`[ClaudeClient] Starting stream API call:`, {
         operationId,
         timestamp: new Date().toISOString()
       });
@@ -377,7 +391,7 @@ class ClaudeClient {
         apiTimeout
       ]);
 
-      console.log(`[ClaudeClient] Stream established, processing events:`, {
+      this.logger.debug(`[ClaudeClient] Stream established, processing events:`, {
         operationId
       });
 
@@ -389,13 +403,13 @@ class ClaudeClient {
           onChunk(text);
         } else if (event.type === 'message_start') {
           inputTokens = event.message.usage.input_tokens;
-          console.log(`[ClaudeClient] Stream message_start:`, {
+          this.logger.debug(`[ClaudeClient] Stream message_start:`, {
             operationId,
             inputTokens
           });
         } else if (event.type === 'message_delta') {
           outputTokens = event.usage.output_tokens;
-          console.log(`[ClaudeClient] Stream message_delta:`, {
+          this.logger.debug(`[ClaudeClient] Stream message_delta:`, {
             operationId,
             outputTokens
           });
@@ -403,7 +417,7 @@ class ClaudeClient {
       }
 
       const duration = Date.now() - startTime;
-      console.log(`[ClaudeClient] Stream completed:`, {
+      this.logger.debug(`[ClaudeClient] Stream completed:`, {
         operationId,
         duration,
         durationSeconds: (duration / 1000).toFixed(2),
@@ -420,7 +434,7 @@ class ClaudeClient {
       const variance = actualCost - estimatedCost;
       const variancePercent = estimatedCost > 0 ? ((variance / estimatedCost) * 100).toFixed(2) : 0;
 
-      console.log(`[ClaudeClient] Stream response processing:`, {
+      this.logger.debug(`[ClaudeClient] Stream response processing:`, {
         operationId,
         inputTokens,
         outputTokens,
@@ -433,14 +447,26 @@ class ClaudeClient {
 
       const responseTime = Date.now() - startTime;
 
-      console.log(`[ClaudeClient] Recording stream usage:`, {
+      // Log API call for tracking
+      this.logger.apiCall({
+        operation: 'streamMessage',
+        agentId,
+        operationId,
+        model: request.model,
+        inputTokens,
+        outputTokens,
+        cost: actualCost,
+        duration: responseTime
+      });
+
+      this.logger.debug(`[ClaudeClient] Recording stream usage:`, {
         operationId,
         actualCost: actualCost.toFixed(6)
       });
 
       await this.budgetManager.recordUsage(operationId, actualCost);
 
-      console.log(`[ClaudeClient] Stream usage recorded successfully:`, {
+      this.logger.debug(`[ClaudeClient] Stream usage recorded successfully:`, {
         operationId
       });
 
@@ -463,7 +489,7 @@ class ClaudeClient {
       };
 
     } catch (error) {
-      console.error(`[ClaudeClient] Stream error:`, {
+      this.logger.error(`[ClaudeClient] Stream error:`, {
         operationId,
         agentId,
         error: error.message,
@@ -472,17 +498,17 @@ class ClaudeClient {
       });
 
       // Clean up budget reservation on failure
-      console.log(`[ClaudeClient] Attempting stream budget cleanup:`, {
+      this.logger.debug(`[ClaudeClient] Attempting stream budget cleanup:`, {
         operationId
       });
 
       try {
         await this.budgetManager.releaseReservation(operationId);
-        console.log(`[ClaudeClient] Stream budget reservation released:`, {
+        this.logger.debug(`[ClaudeClient] Stream budget reservation released:`, {
           operationId
         });
       } catch (cleanupError) {
-        console.error(`[ClaudeClient] Failed to release stream reservation:`, {
+        this.logger.error(`[ClaudeClient] Failed to release stream reservation:`, {
           operationId,
           cleanupError: cleanupError.message
         });
@@ -513,7 +539,7 @@ class ClaudeClient {
 
     const estimatedCost = (inputTokens * costs.input) + (outputTokens * costs.output);
 
-    console.log(`[ClaudeClient] _estimateCost:`, {
+    this.logger.debug(`[ClaudeClient] _estimateCost:`, {
       model,
       inputTextLength: inputText.length,
       estimatedInputTokens: inputTokens,
@@ -534,7 +560,7 @@ class ClaudeClient {
     const costs = this.costs[model] || this.costs['claude-3-sonnet-20240229'];
     const actualCost = (inputTokens * costs.input) + (outputTokens * costs.output);
 
-    console.log(`[ClaudeClient] _calculateActualCost:`, {
+    this.logger.debug(`[ClaudeClient] _calculateActualCost:`, {
       model,
       inputTokens,
       outputTokens,
@@ -552,7 +578,7 @@ class ClaudeClient {
    * @returns {Promise<boolean>}
    */
   async healthCheck() {
-    console.log(`[ClaudeClient] Health check starting...`);
+    this.logger.debug(`[ClaudeClient] Health check starting...`);
     const startTime = Date.now();
 
     try {
@@ -565,7 +591,7 @@ class ClaudeClient {
       const duration = Date.now() - startTime;
       const isHealthy = response.content.includes('OK');
 
-      console.log(`[ClaudeClient] Health check completed:`, {
+      this.logger.debug(`[ClaudeClient] Health check completed:`, {
         duration,
         isHealthy,
         responseContent: response.content.substring(0, 50)
@@ -574,7 +600,7 @@ class ClaudeClient {
       return isHealthy;
     } catch (error) {
       const duration = Date.now() - startTime;
-      console.error(`[ClaudeClient] Health check failed:`, {
+      this.logger.error(`[ClaudeClient] Health check failed:`, {
         duration,
         error: error.message,
         errorType: error.constructor.name

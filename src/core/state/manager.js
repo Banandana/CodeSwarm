@@ -8,11 +8,13 @@ const CheckpointManager = require('./checkpoint');
 const { StateError, ConcurrencyError } = require('../../utils/errors');
 const fs = require('fs-extra');
 const path = require('path');
+const { getLogger } = require('../logging/logger');
 
 class StateManager extends EventEmitter {
-  constructor(outputDir) {
+  constructor(outputDir, options = {}) {
     super();
 
+    this.logger = options.logger || getLogger();
     this.outputDir = outputDir;
     this.state = new Map();
     this.subscribers = new Map();
@@ -420,13 +422,13 @@ class StateManager extends EventEmitter {
   _startArchivalInterval() {
     if (this.archivalInterval) return;
 
-    console.log('[StateManager] Starting state archival system');
+    this.logger.state('[StateManager] Starting state archival system');
 
     this.archivalInterval = setInterval(async () => {
       try {
         await this.archiveOldState();
       } catch (error) {
-        console.error('[StateManager] Archival error:', error.message);
+        this.logger.error('[StateManager] Archival error:', error.message);
       }
     }, this.archivalConfig.archiveInterval);
   }
@@ -483,8 +485,8 @@ class StateManager extends EventEmitter {
     }
 
     if (toArchive.length > 0 || toPrune.length > 0) {
-      console.log(`[StateManager] Archived ${toArchive.length} entries, pruned ${toPrune.length} entries`);
-      console.log(`[StateManager] Memory reclaimed: ${Math.round(this.archivalMetrics.memoryReclaimed / 1024)}KB`);
+      this.logger.state(`[StateManager] Archived ${toArchive.length} entries, pruned ${toPrune.length} entries`);
+      this.logger.state(`[StateManager] Memory reclaimed: ${Math.round(this.archivalMetrics.memoryReclaimed / 1024)}KB`);
 
       this.emit('stateArchived', {
         archived: toArchive.length,
@@ -550,7 +552,7 @@ class StateManager extends EventEmitter {
 
       const entry = archive.entries.find(e => e.key === key);
       if (entry) {
-        console.log(`[StateManager] Restored ${key} from archive: ${file}`);
+        this.logger.state(`[StateManager] Restored ${key} from archive: ${file}`);
         return entry.value;
       }
     }
@@ -575,7 +577,7 @@ class StateManager extends EventEmitter {
    * Cleanup resources and prepare for shutdown
    */
   async cleanup() {
-    console.log('[StateManager] Cleaning up resources...');
+    this.logger.state('[StateManager] Cleaning up resources...');
 
     // Stop archival interval
     if (this.archivalInterval) {
@@ -597,14 +599,14 @@ class StateManager extends EventEmitter {
     }
 
     if (this.operationQueue.length > 0) {
-      console.warn(`[StateManager] ${this.operationQueue.length} operations still pending after cleanup timeout`);
+      this.logger.warn(`[StateManager] ${this.operationQueue.length} operations still pending after cleanup timeout`);
     }
 
     // Clear all subscribers
     const subscriberCount = Array.from(this.subscribers.values()).reduce((sum, s) => sum + s.size, 0);
     this.subscribers.clear();
 
-    console.log(`[StateManager] Cleanup complete: ${subscriberCount} subscribers removed`);
+    this.logger.state(`[StateManager] Cleanup complete: ${subscriberCount} subscribers removed`);
 
     this.emit('cleaned', {
       pendingOperations: this.operationQueue.length,

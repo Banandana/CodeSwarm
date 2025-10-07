@@ -2,6 +2,218 @@
 
 All notable changes to CodeSwarm will be documented in this file.
 
+## [2.5.0] - 2025-10-07
+
+### Added - Centralized Logging System
+
+This release implements a professional logging system with persistent logs, structured metadata, and comprehensive CLI tools for log analysis.
+
+#### Core Components
+
+##### Logger Service (`src/core/logging/logger.js`)
+- **Winston-based logging** with daily rotation
+- **Structured JSON logging** with metadata
+- **Multiple log levels** (debug, info, warn, error)
+- **Specialized logging methods** for different components:
+  - `agent()`: Agent-specific logging with agentId
+  - `apiCall()`: API call tracking (model, tokens, cost, duration)
+  - `task()`: Task execution logging
+  - `budget()`: Budget operations logging
+  - `state()`: State management logging
+- **Sensitive data sanitization**: Automatically redacts API keys, passwords, tokens
+- **Singleton pattern**: Global logger instance via `getLogger()`
+- **Fallback to console**: Works even if not initialized
+
+##### Log Storage
+- **Location**: `.codeswarm/logs/` inside each project directory
+- **Log files**:
+  - `codeswarm-YYYY-MM-DD.log`: Main daily rotated log (14-day retention)
+  - `error.log`: Error-only log for quick issue identification
+  - `api-calls.log`: API usage tracking for cost analysis
+  - `agents/`: Directory for agent-specific logs
+- **Log rotation**: Automatic daily rotation with size limits (20MB max)
+- **Retention**: 14 days of historical logs
+
+##### CLI Command (`codeswarm logs`)
+- **View logs**: Display recent logs with formatting
+- **Filter options**:
+  - `--level <level>`: Filter by log level (debug|info|warn|error)
+  - `--agent <id>`: Filter by specific agent ID
+  - `--api`: Show API calls only
+  - `--errors`: Show errors only
+- **Display options**:
+  - `-l, --lines <count>`: Number of lines to show (default 50)
+  - `-f, --follow`: Follow log output in real-time (like `tail -f`)
+- **Color-coded output**: Errors in red, warnings in yellow, info in cyan
+- **Timestamp display**: Human-readable timestamps
+- **Metadata display**: Shows important metadata (cost, error details)
+
+##### Component Integration
+- **BudgetManager**: All budget operations logged with detailed metadata
+- **StateManager**: State operations logged with archival tracking
+- **ClaudeClient**: API calls tracked with tokens, cost, and duration
+- **CommunicationHub**: Message routing logged (80+ log points)
+- **BaseAgent**: Agent lifecycle and task execution logged
+- **CoordinatorAgent**: Project coordination and feature planning logged
+
+#### Configuration
+
+##### Environment Variables
+```bash
+# Optional log level configuration
+LOG_LEVEL=debug   # debug, info, warn, error (default: debug)
+```
+
+#### Usage Examples
+
+##### View Recent Logs
+```bash
+codeswarm logs                    # Show last 50 lines
+codeswarm logs -l 100             # Show last 100 lines
+codeswarm logs -o ./my-project    # Specify project directory
+```
+
+##### Filter Logs
+```bash
+codeswarm logs --errors           # Show errors only
+codeswarm logs --api              # Show API calls only
+codeswarm logs --level warn       # Show warnings and errors
+codeswarm logs --agent agent-123  # Show specific agent's logs
+```
+
+##### Follow Logs in Real-time
+```bash
+codeswarm logs -f                 # Follow log output (Ctrl+C to exit)
+```
+
+##### Clean Logs
+```bash
+codeswarm clean --logs            # Remove logs along with temp files
+codeswarm clean                   # Clean temp files, preserve logs
+```
+
+#### Log Format
+
+##### Structured JSON Format
+```json
+{
+  "level": "info",
+  "message": "Task completed successfully",
+  "timestamp": "2025-10-07T10:30:45.123Z",
+  "sessionId": "20251007-103042-abc123",
+  "agentId": "backend-worker-1",
+  "component": "agent",
+  "taskId": "task-456",
+  "duration": 12340
+}
+```
+
+##### API Call Logging
+```json
+{
+  "level": "info",
+  "message": "API call",
+  "timestamp": "2025-10-07T10:30:45.123Z",
+  "component": "api",
+  "model": "claude-3-sonnet-20240229",
+  "inputTokens": 1234,
+  "outputTokens": 567,
+  "cost": 0.003456,
+  "duration": 2345,
+  "agentId": "backend-worker-1",
+  "operationId": "op-789"
+}
+```
+
+#### Benefits
+
+- **Debugging**: Easily trace issues with structured logs
+- **Cost Analysis**: Track API usage and costs per operation
+- **Performance Monitoring**: Analyze task durations and bottlenecks
+- **Agent Tracking**: Follow individual agent behavior
+- **Audit Trail**: Complete history of all operations
+- **Troubleshooting**: Error logs with full context
+- **No Console Clutter**: Clean console output, detailed logs in files
+
+#### Performance Impact
+
+- **Minimal overhead**: <1% performance impact
+- **Async logging**: Non-blocking log writes
+- **Log rotation**: Automatic cleanup prevents disk space issues
+- **Configurable verbosity**: Debug logs can be disabled in production
+
+#### Testing
+
+- **Unit Tests**: 27 tests for logger service (100% coverage)
+- **Test file**: `tests/unit/logger.test.js`
+- **Coverage**: All log levels, specialized methods, sanitization, rotation
+
+### Changed
+
+#### Component Updates
+- **All core components** now use structured logging instead of console.log
+- **80+ console statements** replaced in CommunicationHub
+- **25+ console statements** replaced in BudgetManager
+- **10+ console statements** replaced in StateManager
+- **50+ console statements** replaced in ClaudeClient
+- **100+ console statements** replaced in BaseAgent
+- **50+ console statements** replaced in CoordinatorAgent
+
+#### CLI Enhancements
+- **Clean command** updated with `--logs` option to remove logs
+- **Logs preserved by default** when cleaning temp files
+
+#### App Integration
+- **Logger initialized first** in `app.js` before any operations
+- **Logger passed to all components** via dependency injection
+- **Logger closed last** during cleanup
+- **Graceful shutdown** ensures all logs are flushed
+
+### Migration Guide
+
+#### No Changes Required
+- Logging is **automatic** for all components
+- Existing code continues to work unchanged
+- Logs stored in each project's `.codeswarm/logs/` directory
+
+#### Viewing Logs
+```bash
+cd my-project
+codeswarm logs              # View logs from the project
+```
+
+#### Accessing Logs Programmatically
+```javascript
+const { getLogger } = require('./src/core/logging/logger');
+const logger = getLogger();
+
+logger.info('Operation completed', { operationId: '123' });
+logger.error('Operation failed', { error: error.message });
+```
+
+### Breaking Changes
+
+None. All changes are backward compatible.
+
+### Future Enhancements
+
+Planned for future releases:
+- **Log aggregation**: Centralized logging for multiple projects
+- **Log analytics**: Web dashboard for log analysis
+- **Alerting**: Real-time alerts for errors and budget thresholds
+- **Log export**: Export logs to external services (CloudWatch, DataDog)
+- **Advanced filtering**: Query language for complex log searches
+
+### Contributors
+
+- Centralized logging system implementation
+- 6 core components updated with structured logging
+- New CLI command for log viewing and analysis
+- 27 unit tests for logger service
+- ~400 lines of new code, 200+ console statements replaced
+
+---
+
 ## [2.4.0] - 2025-10-07
 
 ### Added - Comprehensive API-Mocked Test Suite

@@ -13,7 +13,7 @@ class ArchitectAgent extends BaseAgent {
 
     // Add error handler to prevent crashes
     this.on('error', (error) => {
-      console.error(`[${this.agentId}] Error:`, error.message);
+      this.logger.agent(this.agentId, "error", `[${this.agentId}] Error:`, error.message);
     });
   }
 

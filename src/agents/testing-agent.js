@@ -13,7 +13,7 @@ class TestingAgent extends BaseAgent {
 
     // Add error handler to prevent crashes
     this.on('error', (error) => {
-      console.error(`[${this.agentId}] Error:`, error.message);
+      this.logger.agent(this.agentId, "error", `[${this.agentId}] Error:`, error.message);
     });
   }
 
@@ -23,10 +23,10 @@ class TestingAgent extends BaseAgent {
    * @returns {Promise<Object>}
    */
   async executeTask(task) {
-    console.log(`[TestingAgent] executeTask called for task:`, task.id);
+    this.logger.agent(this.agentId, "debug", `[TestingAgent] executeTask called for task:`, task.id);
 
     // Validate task
-    console.log(`[TestingAgent] Validating task...`);
+    this.logger.agent(this.agentId, "debug", `[TestingAgent] Validating task...`);
     const validation = this.validateTask(task);
     if (!validation.valid) {
       throw new AgentError(
@@ -39,22 +39,22 @@ class TestingAgent extends BaseAgent {
     let transactionId = null;
     if (this.fileOps && this.fileOps.transactionManager) {
       transactionId = this.fileOps.transactionManager.beginTransaction();
-      console.log(`[TestingAgent] Transaction started: ${transactionId}`);
+      this.logger.agent(this.agentId, "debug", `[TestingAgent] Transaction started: ${transactionId}`);
     }
 
     try {
       // Prepare context
-      console.log(`[TestingAgent] Preparing context...`);
+      this.logger.agent(this.agentId, "debug", `[TestingAgent] Preparing context...`);
       const context = await this._prepareContext(task);
-      console.log(`[TestingAgent] Context prepared`);
+      this.logger.agent(this.agentId, "debug", `[TestingAgent] Context prepared`);
 
       // Generate prompt
-      console.log(`[TestingAgent] Generating prompt...`);
+      this.logger.agent(this.agentId, "debug", `[TestingAgent] Generating prompt...`);
       const { systemPrompt, userPrompt, temperature, maxTokens } =
         generateTestingPrompt(task, context);
 
       // Call Claude API
-      console.log(`[TestingAgent] Calling Claude API...`);
+      this.logger.agent(this.agentId, "debug", `[TestingAgent] Calling Claude API...`);
       const response = await this.retryWithBackoff(async () => {
         return await this.callClaude(
           [{ role: 'user', content: userPrompt }],
@@ -68,7 +68,7 @@ class TestingAgent extends BaseAgent {
       });
 
       // Parse response with null safety
-      console.log(`[TestingAgent] Parsing response...`);
+      this.logger.agent(this.agentId, "debug", `[TestingAgent] Parsing response...`);
       if (!response || !response.content) {
         throw new AgentError(
           `Invalid response from Claude API: ${!response ? 'response is null/undefined' : 'response.content is null/undefined'}`,
@@ -86,7 +86,7 @@ class TestingAgent extends BaseAgent {
       }
 
       if (contentTrimmed.length < 10) {
-        console.warn(`[TestingAgent] Warning: Very short response content (${contentTrimmed.length} chars)`);
+        this.logger.agent(this.agentId, "warn", `[TestingAgent] Warning: Very short response content (${contentTrimmed.length} chars)`);
       }
 
       const result = this._parseResponse(response.content);
@@ -113,7 +113,7 @@ class TestingAgent extends BaseAgent {
       // Commit transaction on success
       if (transactionId && this.fileOps && this.fileOps.transactionManager) {
         await this.fileOps.transactionManager.commitTransaction(transactionId);
-        console.log(`[TestingAgent] Transaction committed: ${transactionId}`);
+        this.logger.agent(this.agentId, "debug", `[TestingAgent] Transaction committed: ${transactionId}`);
       }
 
       // Run tests if requested
@@ -142,9 +142,9 @@ class TestingAgent extends BaseAgent {
       if (transactionId && this.fileOps && this.fileOps.transactionManager) {
         try {
           await this.fileOps.transactionManager.rollbackTransaction(transactionId);
-          console.log(`[TestingAgent] Transaction rolled back: ${transactionId}`);
+          this.logger.agent(this.agentId, "debug", `[TestingAgent] Transaction rolled back: ${transactionId}`);
         } catch (rollbackError) {
-          console.error(`[TestingAgent] Failed to rollback transaction ${transactionId}:`, rollbackError.message);
+          this.logger.agent(this.agentId, "error", `[TestingAgent] Failed to rollback transaction ${transactionId}:`, rollbackError.message);
         }
       }
       throw error;
@@ -259,7 +259,7 @@ class TestingAgent extends BaseAgent {
           try {
             await this.releaseLock(lockId);
           } catch (releaseError) {
-            console.error(`[TestingAgent] Failed to release lock ${lockId}:`, releaseError.message);
+            this.logger.agent(this.agentId, "error", `[TestingAgent] Failed to release lock ${lockId}:`, releaseError.message);
           }
         }
 
@@ -277,7 +277,7 @@ class TestingAgent extends BaseAgent {
           try {
             await this.releaseLock(lockId);
           } catch (releaseError) {
-            console.error(`[TestingAgent] Failed to release lock ${lockId} in finally:`, releaseError.message);
+            this.logger.agent(this.agentId, "error", `[TestingAgent] Failed to release lock ${lockId} in finally:`, releaseError.message);
           }
         }
       }

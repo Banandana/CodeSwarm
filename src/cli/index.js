@@ -287,6 +287,164 @@ DEFAULT_AGENT_COUNT=2
   });
 
 /**
+ * Logs command - view and analyze logs
+ */
+program
+  .command('logs')
+  .description('View logs from code generation')
+  .option('-o, --output <path>', 'Output directory', './output')
+  .option('-f, --follow', 'Follow log output in real-time')
+  .option('-l, --lines <count>', 'Number of lines to show', '50')
+  .option('--level <level>', 'Filter by log level (debug|info|warn|error)')
+  .option('--agent <id>', 'Filter by agent ID')
+  .option('--api', 'Show API calls only')
+  .option('--errors', 'Show errors only')
+  .action(async (options) => {
+    try {
+      const outputDir = path.resolve(options.output);
+      const logsDir = path.join(outputDir, '.codeswarm', 'logs');
+
+      if (!await fs.pathExists(logsDir)) {
+        console.log(chalk.yellow('No logs found in this directory'));
+        return;
+      }
+
+      // Find most recent log file
+      const files = await fs.readdir(logsDir);
+      const mainLogs = files
+        .filter(f => f.startsWith('codeswarm-') && f.endsWith('.log'))
+        .sort()
+        .reverse();
+
+      if (mainLogs.length === 0) {
+        console.log(chalk.yellow('No log files found'));
+        return;
+      }
+
+      const logFile = options.api
+        ? path.join(logsDir, 'api-calls.log')
+        : options.errors
+        ? path.join(logsDir, 'error.log')
+        : path.join(logsDir, mainLogs[0]);
+
+      if (!await fs.pathExists(logFile)) {
+        console.log(chalk.yellow('Log file not found'));
+        return;
+      }
+
+      console.log(chalk.cyan(`\n📝 Logs from: ${path.basename(logFile)}\n`));
+      console.log(chalk.gray('─'.repeat(80)));
+
+      // Read and parse logs
+      const content = await fs.readFile(logFile, 'utf-8');
+      const lines = content.trim().split('\n');
+      const numLines = parseInt(options.lines);
+
+      // Filter and display
+      let displayLines = lines;
+
+      // Apply filters
+      if (options.level) {
+        displayLines = displayLines.filter(line => {
+          try {
+            const log = JSON.parse(line);
+            return log.level === options.level;
+          } catch {
+            return false;
+          }
+        });
+      }
+
+      if (options.agent) {
+        displayLines = displayLines.filter(line => {
+          try {
+            const log = JSON.parse(line);
+            return log.agentId === options.agent;
+          } catch {
+            return false;
+          }
+        });
+      }
+
+      // Take last N lines
+      const recentLines = displayLines.slice(-numLines);
+
+      // Format and display
+      recentLines.forEach(line => {
+        try {
+          const log = JSON.parse(line);
+          const timestamp = new Date(log.timestamp).toLocaleTimeString();
+          const level = log.level.toUpperCase();
+          const levelColor =
+            level === 'ERROR' ? chalk.red :
+            level === 'WARN' ? chalk.yellow :
+            level === 'INFO' ? chalk.cyan :
+            chalk.gray;
+
+          const prefix = `${chalk.gray(timestamp)} ${levelColor(level.padEnd(5))}`;
+
+          if (log.component) {
+            console.log(`${prefix} ${chalk.bold(log.component)}: ${log.message}`);
+          } else if (log.agentId) {
+            console.log(`${prefix} ${chalk.blue(log.agentId)}: ${log.message}`);
+          } else {
+            console.log(`${prefix} ${log.message}`);
+          }
+
+          // Show important metadata
+          if (log.level === 'error' && log.error) {
+            console.log(chalk.gray(`  Error: ${log.error}`));
+          }
+          if (log.cost) {
+            console.log(chalk.gray(`  Cost: $${log.cost.toFixed(6)}`));
+          }
+        } catch {
+          // Non-JSON line, print as-is
+          console.log(chalk.gray(line));
+        }
+      });
+
+      console.log(chalk.gray('─'.repeat(80)));
+      console.log(chalk.gray(`\nShowing ${recentLines.length} lines from ${displayLines.length} total`));
+
+      if (options.follow) {
+        console.log(chalk.cyan('\n👁️  Following logs (Ctrl+C to exit)...\n'));
+        const { spawn } = require('child_process');
+        const tail = spawn('tail', ['-f', logFile]);
+
+        tail.stdout.on('data', (data) => {
+          const lines = data.toString().trim().split('\n');
+          lines.forEach(line => {
+            try {
+              const log = JSON.parse(line);
+              const timestamp = new Date(log.timestamp).toLocaleTimeString();
+              const level = log.level.toUpperCase();
+              const levelColor =
+                level === 'ERROR' ? chalk.red :
+                level === 'WARN' ? chalk.yellow :
+                level === 'INFO' ? chalk.cyan :
+                chalk.gray;
+
+              console.log(`${chalk.gray(timestamp)} ${levelColor(level.padEnd(5))} ${log.message}`);
+            } catch {
+              console.log(chalk.gray(line));
+            }
+          });
+        });
+
+        process.on('SIGINT', () => {
+          tail.kill();
+          process.exit(0);
+        });
+      }
+
+    } catch (error) {
+      console.error(chalk.red('Logs error:'), error.message);
+      process.exit(1);
+    }
+  });
+
+/**
  * Clean command - remove checkpoints and temp files
  */
 program
@@ -294,14 +452,24 @@ program
   .description('Clean checkpoints and temporary files')
   .option('-o, --output <path>', 'Output directory', './output')
   .option('--all', 'Remove all generated code as well')
+  .option('--logs', 'Also remove log files')
   .action(async (options) => {
     try {
       const outputDir = path.resolve(options.output);
       const codeswarmDir = path.join(outputDir, '.codeswarm');
 
       if (await fs.pathExists(codeswarmDir)) {
-        await fs.remove(codeswarmDir);
-        console.log(chalk.green('✓ Cleaned CodeSwarm temporary files'));
+        if (options.logs) {
+          await fs.remove(codeswarmDir);
+          console.log(chalk.green('✓ Cleaned CodeSwarm temporary files and logs'));
+        } else {
+          // Remove state files but keep logs
+          const statePath = path.join(codeswarmDir, 'state.json');
+          const archivePath = path.join(codeswarmDir, 'state-archive');
+          if (await fs.pathExists(statePath)) await fs.remove(statePath);
+          if (await fs.pathExists(archivePath)) await fs.remove(archivePath);
+          console.log(chalk.green('✓ Cleaned CodeSwarm temporary files (logs preserved)'));
+        }
       }
 
       if (options.all) {

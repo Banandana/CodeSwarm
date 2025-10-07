@@ -7,10 +7,13 @@ const EventEmitter = require('events');
 const CircuitBreaker = require('./circuit-breaker');
 const CostEstimator = require('./cost-estimator');
 const { BudgetError, BudgetValidationError, CostOverrunError } = require('../../utils/errors');
+const { getLogger } = require('../logging/logger');
 
 class BudgetManager extends EventEmitter {
   constructor(config = {}) {
     super();
+
+    this.logger = config.logger || getLogger();
 
     this.config = {
       maxBudget: config.maxBudget || 100.0,
@@ -35,7 +38,8 @@ class BudgetManager extends EventEmitter {
     try {
       this.circuitBreaker = new CircuitBreaker({
         failureThreshold: 5,
-        resetTimeout: 30000
+        resetTimeout: 30000,
+        logger: this.logger
       });
 
       if (!this.circuitBreaker) {
@@ -112,7 +116,7 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async validateOperation(operationId, estimatedCost, agentId, priority = 'MEDIUM') {
-    console.log(`[BudgetManager] validateOperation called:`, {
+    this.logger.budget(`[BudgetManager] validateOperation called:`, {
       operationId,
       estimatedCost,
       agentId,
@@ -133,7 +137,7 @@ class BudgetManager extends EventEmitter {
 
       if (!canExecute) {
         const state = this.circuitBreaker.getState();
-        console.warn(`[BudgetManager] Circuit breaker blocking operation:`, {
+        this.logger.warn(`[BudgetManager] Circuit breaker blocking operation:`, {
           operationId,
           state: state.state,
           failureCount: state.failureCount,
@@ -147,7 +151,7 @@ class BudgetManager extends EventEmitter {
 
       // Calculate projected usage (atomic read within mutex)
       const totalProjected = this.usage.total + this.usage.reserved + estimatedCost;
-      console.debug(`[BudgetManager] Budget calculation:`, {
+      this.logger.debug(`[BudgetManager] Budget calculation:`, {
         operationId,
         currentTotal: this.usage.total,
         currentReserved: this.usage.reserved,
@@ -159,7 +163,7 @@ class BudgetManager extends EventEmitter {
 
       // Hard limit check
       if (totalProjected > this.config.maxBudget) {
-        console.error(`[BudgetManager] Budget limit exceeded:`, {
+        this.logger.error(`[BudgetManager] Budget limit exceeded:`, {
           operationId,
           requested: estimatedCost,
           projected: totalProjected,
@@ -188,7 +192,7 @@ class BudgetManager extends EventEmitter {
 
       // Reserve check
       const reserveRemaining = this.config.maxBudget - totalProjected;
-      console.debug(`[BudgetManager] Reserve check:`, {
+      this.logger.debug(`[BudgetManager] Reserve check:`, {
         operationId,
         reserveRemaining,
         minReserve: this.config.minReserve,
@@ -196,7 +200,7 @@ class BudgetManager extends EventEmitter {
       });
 
       if (reserveRemaining < this.config.minReserve) {
-        console.warn(`[BudgetManager] Minimum reserve violated:`, {
+        this.logger.warn(`[BudgetManager] Minimum reserve violated:`, {
           operationId,
           reserveRemaining,
           minReserve: this.config.minReserve,
@@ -225,7 +229,7 @@ class BudgetManager extends EventEmitter {
         status: 'reserved'
       });
 
-      console.log(`[BudgetManager] Budget reserved successfully:`, {
+      this.logger.budget(`[BudgetManager] Budget reserved successfully:`, {
         operationId,
         estimatedCost,
         newReserved: this.usage.reserved,
@@ -236,7 +240,7 @@ class BudgetManager extends EventEmitter {
       // Warning threshold check
       const utilizationPercent = totalProjected / this.config.maxBudget;
       if (utilizationPercent >= this.config.warningThreshold) {
-        console.warn(`[BudgetManager] Budget warning threshold reached:`, {
+        this.logger.warn(`[BudgetManager] Budget warning threshold reached:`, {
           operationId,
           utilization: utilizationPercent,
           threshold: this.config.warningThreshold,
@@ -255,7 +259,7 @@ class BudgetManager extends EventEmitter {
       // FIX B4: Removed recordSuccess() from here
       // Circuit breaker success should only be recorded after operation completes (in recordUsage)
 
-      console.log(`[BudgetManager] validateOperation completed successfully:`, {
+      this.logger.budget(`[BudgetManager] validateOperation completed successfully:`, {
         operationId,
         approved: true,
         remaining: this.config.maxBudget - totalProjected,
@@ -271,7 +275,7 @@ class BudgetManager extends EventEmitter {
       };
 
     } catch (error) {
-      console.error(`[BudgetManager] validateOperation failed:`, {
+      this.logger.error(`[BudgetManager] validateOperation failed:`, {
         operationId,
         error: error.message,
         errorType: error.constructor.name
@@ -301,7 +305,7 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async releaseReservation(operationId) {
-    console.log(`[BudgetManager] releaseReservation called:`, {
+    this.logger.budget(`[BudgetManager] releaseReservation called:`, {
       operationId,
       currentReserved: this.usage.reserved,
       operationExists: this.usage.operations.has(operationId)
@@ -310,14 +314,14 @@ class BudgetManager extends EventEmitter {
     const operation = this.usage.operations.get(operationId);
 
     if (!operation) {
-      console.error(`[BudgetManager] Cannot release unknown operation:`, { operationId });
+      this.logger.error(`[BudgetManager] Cannot release unknown operation:`, { operationId });
       throw new BudgetError(
         `Cannot release reservation: unknown operation ${operationId}`
       );
     }
 
     if (operation.status !== 'reserved') {
-      console.error(`[BudgetManager] Cannot release non-reserved operation:`, {
+      this.logger.error(`[BudgetManager] Cannot release non-reserved operation:`, {
         operationId,
         currentStatus: operation.status
       });
@@ -331,7 +335,7 @@ class BudgetManager extends EventEmitter {
     this.usage.reserved -= operation.estimatedCost;
     this.usage.operations.delete(operationId);
 
-    console.log(`[BudgetManager] Reservation released:`, {
+    this.logger.budget(`[BudgetManager] Reservation released:`, {
       operationId,
       releasedAmount: operation.estimatedCost,
       previousReserved,
@@ -362,7 +366,7 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async recordUsage(operationId, actualCost) {
-    console.log(`[BudgetManager] recordUsage called:`, {
+    this.logger.budget(`[BudgetManager] recordUsage called:`, {
       operationId,
       actualCost,
       currentTotal: this.usage.total,
@@ -374,7 +378,7 @@ class BudgetManager extends EventEmitter {
 
     // FIX B2: Reject untracked operations instead of silently recording them
     if (!operation) {
-      console.error(`[BudgetManager] Cannot record usage for untracked operation:`, {
+      this.logger.error(`[BudgetManager] Cannot record usage for untracked operation:`, {
         operationId,
         actualCost,
         operationsMapSize: this.usage.operations.size
@@ -403,7 +407,7 @@ class BudgetManager extends EventEmitter {
     operation.variance = actualCost - operation.estimatedCost;
     operation.variancePercent = (operation.variance / operation.estimatedCost) * 100;
 
-    console.log(`[BudgetManager] Budget totals updated:`, {
+    this.logger.budget(`[BudgetManager] Budget totals updated:`, {
       operationId,
       previousTotal,
       newTotal: this.usage.total,
@@ -421,7 +425,7 @@ class BudgetManager extends EventEmitter {
       duration: operation.completedAt - operation.timestamp
     });
 
-    console.debug(`[BudgetManager] Operation added to history:`, {
+    this.logger.debug(`[BudgetManager] Operation added to history:`, {
       operationId,
       historyLength: this.usage.history.length,
       duration: operation.completedAt - operation.timestamp
@@ -615,7 +619,7 @@ class BudgetManager extends EventEmitter {
         this.usage.operations.delete(operationId);
         expired.push(operationId);
 
-        console.warn(`[BudgetManager] Stuck operation cleaned up after 10+ minutes:`, {
+        this.logger.warn(`[BudgetManager] Stuck operation cleaned up after 10+ minutes:`, {
           operationId,
           estimatedCost: operation.estimatedCost,
           agentId: operation.agentId,

@@ -7,6 +7,7 @@ const EventEmitter = require('events');
 const { v4: uuidv4 } = require('uuid');
 const { AgentError } = require('../utils/errors');
 const MessageProtocol = require('../core/communication/protocol');
+const { getLogger } = require('../core/logging/logger');
 
 class BaseAgent extends EventEmitter {
   constructor(agentId, agentType, communicationHub, options = {}) {
@@ -15,6 +16,7 @@ class BaseAgent extends EventEmitter {
     this.agentId = agentId || `${agentType}-${uuidv4()}`;
     this.agentType = agentType;
     this.communicationHub = communicationHub;
+    this.logger = options.logger || getLogger();
 
     this.config = {
       maxConcurrentTasks: options.maxConcurrentTasks || 1,
@@ -33,7 +35,7 @@ class BaseAgent extends EventEmitter {
       conversationHistory: []
     };
 
-    console.log(`[${this.agentType}] Agent initialized:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Agent initialized:`, {
       agentId: this.agentId,
       agentType: this.agentType,
       maxConcurrentTasks: this.config.maxConcurrentTasks,
@@ -48,7 +50,7 @@ class BaseAgent extends EventEmitter {
     // NOTE: Heartbeats disabled by default to prevent message queue saturation
     // with 10+ concurrent agents. Enable with heartbeatInterval > 0 if needed.
     if (this.config.heartbeatInterval > 0) {
-      console.log(`[${this.agentType}] Starting heartbeat:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Starting heartbeat:`, {
         agentId: this.agentId,
         interval: this.config.heartbeatInterval
       });
@@ -61,7 +63,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<void>}
    */
   async initialize() {
-    console.log(`[${this.agentType}] Initializing agent:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Initializing agent:`, {
       agentId: this.agentId,
       timestamp: new Date().toISOString()
     });
@@ -72,7 +74,7 @@ class BaseAgent extends EventEmitter {
       timestamp: Date.now()
     });
 
-    console.log(`[${this.agentType}] Agent initialization complete:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Agent initialization complete:`, {
       agentId: this.agentId
     });
   }
@@ -100,7 +102,7 @@ class BaseAgent extends EventEmitter {
       const architecture = await this.readState('architecture:current');
 
       if (!architecture) {
-        console.log(`[${this.agentType}] No architecture found in state`);
+        this.logger.agent(this.agentId, "debug", `[${this.agentType}] No architecture found in state`);
         return null;
       }
 
@@ -136,12 +138,12 @@ class BaseAgent extends EventEmitter {
         context.constraints = engine.getConstraintInstructions(task);
       }
 
-      console.log(`[${this.agentType}] Loaded architectural context for task ${task.id}`);
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Loaded architectural context for task ${task.id}`);
 
       return context;
 
     } catch (error) {
-      console.warn(`[${this.agentType}] Failed to load architectural context: ${error.message}`);
+      this.logger.agent(this.agentId, "warn", `[${this.agentType}] Failed to load architectural context: ${error.message}`);
       return null;
     }
   }
@@ -152,7 +154,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async handleTaskAssignment(task) {
-    console.log(`[${this.agentType}] Task assignment received:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Task assignment received:`, {
       agentId: this.agentId,
       taskId: task.id,
       taskType: task.type,
@@ -164,7 +166,7 @@ class BaseAgent extends EventEmitter {
 
     try {
       // Update state
-      console.log(`[${this.agentType}] Updating state to 'working':`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Updating state to 'working':`, {
         agentId: this.agentId,
         taskId: task.id,
         previousStatus: this.state.status
@@ -179,7 +181,7 @@ class BaseAgent extends EventEmitter {
         timestamp: Date.now()
       });
 
-      console.log(`[${this.agentType}] Executing task:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Executing task:`, {
         agentId: this.agentId,
         taskId: task.id
       });
@@ -189,7 +191,7 @@ class BaseAgent extends EventEmitter {
 
       const taskDuration = Date.now() - taskStartTime;
 
-      console.log(`[${this.agentType}] Task execution completed:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Task execution completed:`, {
         agentId: this.agentId,
         taskId: task.id,
         duration: taskDuration,
@@ -213,7 +215,7 @@ class BaseAgent extends EventEmitter {
         timestamp: Date.now()
       });
 
-      console.log(`[${this.agentType}] Sending task completion message:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Sending task completion message:`, {
         agentId: this.agentId,
         taskId: task.id,
         conversationHistoryLength: this.state.conversationHistory.length
@@ -230,7 +232,7 @@ class BaseAgent extends EventEmitter {
         priority: 'NORMAL'
       });
 
-      console.log(`[${this.agentType}] Task completed successfully:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Task completed successfully:`, {
         agentId: this.agentId,
         taskId: task.id,
         totalDuration: Date.now() - taskStartTime
@@ -241,7 +243,7 @@ class BaseAgent extends EventEmitter {
     } catch (error) {
       const taskDuration = Date.now() - taskStartTime;
 
-      console.error(`[${this.agentType}] Task execution failed:`, {
+      this.logger.agent(this.agentId, "error", `[${this.agentType}] Task execution failed:`, {
         agentId: this.agentId,
         taskId: task.id,
         duration: taskDuration,
@@ -265,7 +267,7 @@ class BaseAgent extends EventEmitter {
         timestamp: Date.now()
       });
 
-      console.log(`[${this.agentType}] Sending task failure notification:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Sending task failure notification:`, {
         agentId: this.agentId,
         taskId: task.id
       });
@@ -283,7 +285,7 @@ class BaseAgent extends EventEmitter {
 
       throw error;
     } finally {
-      console.log(`[${this.agentType}] Task cleanup:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Task cleanup:`, {
         agentId: this.agentId,
         taskId: task.id,
         finalStatus: this.state.status
@@ -304,12 +306,12 @@ class BaseAgent extends EventEmitter {
   async _executeWithTimeout(task) {
     const timeoutMs = this.config.taskTimeout || 180000; // 3 minutes default
 
-    console.log(`[${this.agentId}] Starting task with ${timeoutMs}ms timeout:`, task.id);
+    this.logger.agent(this.agentId, "debug", `[${this.agentId}] Starting task with ${timeoutMs}ms timeout:`, task.id);
 
     let timeoutId;
     const timeoutPromise = new Promise((_, reject) => {
       timeoutId = setTimeout(() => {
-        console.error(`[${this.agentId}] ⏱️ Task timeout after ${timeoutMs}ms:`, {
+        this.logger.agent(this.agentId, "error", `[${this.agentId}] ⏱️ Task timeout after ${timeoutMs}ms:`, {
           taskId: task.id,
           agentType: this.agentType
         });
@@ -325,11 +327,11 @@ class BaseAgent extends EventEmitter {
         this.executeTask(task),
         timeoutPromise
       ]);
-      console.log(`[${this.agentId}] ✓ Task completed:`, task.id);
+      this.logger.agent(this.agentId, "debug", `[${this.agentId}] ✓ Task completed:`, task.id);
       if (timeoutId) clearTimeout(timeoutId);
       return result;
     } catch (error) {
-      console.error(`[${this.agentId}] ✗ Task failed:`, task.id, error.message);
+      this.logger.agent(this.agentId, "error", `[${this.agentId}] ✗ Task failed:`, task.id, error.message);
       if (timeoutId) clearTimeout(timeoutId);
       throw error;
     }
@@ -360,7 +362,7 @@ class BaseAgent extends EventEmitter {
   async sendMessage(message) {
     const payloadSize = JSON.stringify(message.payload || {}).length;
 
-    console.log(`[${this.agentType}] Sending message:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Sending message:`, {
       agentId: this.agentId,
       type: message.type,
       priority: message.priority || 'NORMAL',
@@ -390,7 +392,7 @@ class BaseAgent extends EventEmitter {
     const response = await this.communicationHub.routeMessage(fullMessage);
     const duration = Date.now() - startTime;
 
-    console.log(`[${this.agentType}] Message sent successfully:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Message sent successfully:`, {
       agentId: this.agentId,
       type: message.type,
       duration,
@@ -406,7 +408,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<string>}
    */
   async readFile(filePath) {
-    console.log(`[${this.agentType}] Requesting file read:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Requesting file read:`, {
       agentId: this.agentId,
       filePath
     });
@@ -419,7 +421,7 @@ class BaseAgent extends EventEmitter {
     });
 
     const duration = Date.now() - startTime;
-    console.log(`[${this.agentType}] File read completed:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] File read completed:`, {
       agentId: this.agentId,
       filePath,
       duration,
@@ -437,7 +439,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async writeFile(filePath, content, options = {}) {
-    console.log(`[${this.agentType}] Requesting file write:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Requesting file write:`, {
       agentId: this.agentId,
       filePath,
       contentSize: content.length,
@@ -452,7 +454,7 @@ class BaseAgent extends EventEmitter {
     });
 
     const duration = Date.now() - startTime;
-    console.log(`[${this.agentType}] File write completed:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] File write completed:`, {
       agentId: this.agentId,
       filePath,
       duration,
@@ -468,7 +470,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<string>} Lock ID
    */
   async acquireLock(filePath) {
-    console.log(`[${this.agentType}] Requesting lock:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Requesting lock:`, {
       agentId: this.agentId,
       resource: filePath
     });
@@ -481,7 +483,7 @@ class BaseAgent extends EventEmitter {
     });
 
     const duration = Date.now() - startTime;
-    console.log(`[${this.agentType}] Lock acquired:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Lock acquired:`, {
       agentId: this.agentId,
       resource: filePath,
       lockId: response.lockId,
@@ -497,7 +499,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<void>}
    */
   async releaseLock(lockId) {
-    console.log(`[${this.agentType}] Releasing lock:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Releasing lock:`, {
       agentId: this.agentId,
       lockId
     });
@@ -510,7 +512,7 @@ class BaseAgent extends EventEmitter {
     });
 
     const duration = Date.now() - startTime;
-    console.log(`[${this.agentType}] Lock released:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Lock released:`, {
       agentId: this.agentId,
       lockId,
       duration
@@ -524,7 +526,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async callClaude(messages, options = {}) {
-    console.log(`[${this.agentType}] Requesting Claude API call:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Requesting Claude API call:`, {
       agentId: this.agentId,
       messageCount: messages.length,
       model: options.model || 'default',
@@ -535,7 +537,7 @@ class BaseAgent extends EventEmitter {
 
     // Estimate cost for budget validation
     const estimatedCost = this._estimateClaudeCost(messages, options);
-    console.log(`[${this.agentType}] Claude cost estimated:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Claude cost estimated:`, {
       agentId: this.agentId,
       estimatedCost: estimatedCost.toFixed(6)
     });
@@ -550,7 +552,7 @@ class BaseAgent extends EventEmitter {
 
     const duration = Date.now() - startTime;
 
-    console.log(`[${this.agentType}] Claude API call completed:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Claude API call completed:`, {
       agentId: this.agentId,
       duration,
       durationSeconds: (duration / 1000).toFixed(2),
@@ -569,7 +571,7 @@ class BaseAgent extends EventEmitter {
       cost: response.usage?.cost
     });
 
-    console.log(`[${this.agentType}] Conversation history updated:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Conversation history updated:`, {
       agentId: this.agentId,
       historyLength: this.state.conversationHistory.length,
       totalCost: this.state.conversationHistory
@@ -615,7 +617,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async requestHandoff(targetAgentType, context) {
-    console.log(`[${this.agentType}] Requesting handoff:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Requesting handoff:`, {
       agentId: this.agentId,
       fromAgent: this.agentType,
       targetAgentType,
@@ -638,7 +640,7 @@ class BaseAgent extends EventEmitter {
     });
 
     const duration = Date.now() - startTime;
-    console.log(`[${this.agentType}] Handoff completed:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Handoff completed:`, {
       agentId: this.agentId,
       targetAgentType,
       duration,
@@ -655,7 +657,7 @@ class BaseAgent extends EventEmitter {
    * @protected
    */
   parseClaudeJSON(content) {
-    console.log(`[${this.agentType}] Parsing Claude JSON response:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Parsing Claude JSON response:`, {
       agentId: this.agentId,
       contentLength: content.length,
       contentPreview: content.substring(0, 100)
@@ -674,7 +676,7 @@ class BaseAgent extends EventEmitter {
         /```\s+([\s\S]*?)\s*```/        // ``` ...\n```
       ];
 
-      console.log(`[${this.agentType}] Attempting regex pattern matching:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Attempting regex pattern matching:`, {
         agentId: this.agentId,
         patternCount: patterns.length
       });
@@ -683,19 +685,19 @@ class BaseAgent extends EventEmitter {
         const pattern = patterns[i];
         const match = cleanContent.match(pattern);
         if (match && match[1]) {
-          console.log(`[${this.agentType}] Pattern ${i + 1} matched:`, {
+          this.logger.agent(this.agentId, "debug", `[${this.agentType}] Pattern ${i + 1} matched:`, {
             agentId: this.agentId,
             extractedLength: match[1].length
           });
           try {
             const parsed = JSON.parse(match[1].trim());
-            console.log(`[${this.agentType}] Successfully parsed with pattern ${i + 1}:`, {
+            this.logger.agent(this.agentId, "debug", `[${this.agentType}] Successfully parsed with pattern ${i + 1}:`, {
               agentId: this.agentId,
               objectKeys: Object.keys(parsed).length
             });
             return parsed;
           } catch (e) {
-            console.warn(`[${this.agentType}] Pattern ${i + 1} extraction failed:`, {
+            this.logger.agent(this.agentId, "warn", `[${this.agentType}] Pattern ${i + 1} extraction failed:`, {
               agentId: this.agentId,
               error: e.message
             });
@@ -704,7 +706,7 @@ class BaseAgent extends EventEmitter {
         }
       }
 
-      console.log(`[${this.agentType}] No patterns matched, trying string replacement:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] No patterns matched, trying string replacement:`, {
         agentId: this.agentId
       });
 
@@ -718,13 +720,13 @@ class BaseAgent extends EventEmitter {
       // Try to parse the cleaned string
       try {
         const parsed = JSON.parse(jsonStr);
-        console.log(`[${this.agentType}] Successfully parsed with string replacement:`, {
+        this.logger.agent(this.agentId, "debug", `[${this.agentType}] Successfully parsed with string replacement:`, {
           agentId: this.agentId,
           objectKeys: Object.keys(parsed).length
         });
         return parsed;
       } catch (e) {
-        console.warn(`[${this.agentType}] String replacement parsing failed:`, {
+        this.logger.agent(this.agentId, "warn", `[${this.agentType}] String replacement parsing failed:`, {
           agentId: this.agentId,
           error: e.message
         });
@@ -732,12 +734,12 @@ class BaseAgent extends EventEmitter {
         // Strategy 3: Find JSON object boundaries
         const jsonMatch = cleanContent.match(/(\{[\s\S]*\})/);
         if (jsonMatch) {
-          console.log(`[${this.agentType}] Found JSON object boundaries:`, {
+          this.logger.agent(this.agentId, "debug", `[${this.agentType}] Found JSON object boundaries:`, {
             agentId: this.agentId,
             extractedLength: jsonMatch[1].length
           });
           const parsed = JSON.parse(jsonMatch[1].trim());
-          console.log(`[${this.agentType}] Successfully parsed with boundary detection:`, {
+          this.logger.agent(this.agentId, "debug", `[${this.agentType}] Successfully parsed with boundary detection:`, {
             agentId: this.agentId,
             objectKeys: Object.keys(parsed).length
           });
@@ -745,13 +747,13 @@ class BaseAgent extends EventEmitter {
         }
       }
 
-      console.log(`[${this.agentType}] Attempting raw content parse:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Attempting raw content parse:`, {
         agentId: this.agentId
       });
 
       // Strategy 4: Last resort - try raw content
       const parsed = JSON.parse(cleanContent);
-      console.log(`[${this.agentType}] Successfully parsed raw content:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Successfully parsed raw content:`, {
         agentId: this.agentId,
         objectKeys: Object.keys(parsed).length
       });
@@ -759,7 +761,7 @@ class BaseAgent extends EventEmitter {
 
     } catch (error) {
       // Log full response for debugging
-      console.error(`[${this.agentType}] Parse error - all strategies failed:`, {
+      this.logger.agent(this.agentId, "error", `[${this.agentType}] Parse error - all strategies failed:`, {
         agentId: this.agentId,
         error: error.message,
         errorType: error.constructor.name,
@@ -784,7 +786,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Object} { valid: boolean, reason?: string }
    */
   validateTask(task) {
-    console.log(`[${this.agentType}] Validating task:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Validating task:`, {
       agentId: this.agentId,
       taskId: task.id,
       hasDescription: !!task.description,
@@ -792,21 +794,21 @@ class BaseAgent extends EventEmitter {
     });
 
     if (!task.id) {
-      console.warn(`[${this.agentType}] Task validation failed: Missing ID`, {
+      this.logger.agent(this.agentId, "warn", `[${this.agentType}] Task validation failed: Missing ID`, {
         agentId: this.agentId
       });
       return { valid: false, reason: 'Task missing ID' };
     }
 
     if (!task.description) {
-      console.warn(`[${this.agentType}] Task validation failed: Missing description`, {
+      this.logger.agent(this.agentId, "warn", `[${this.agentType}] Task validation failed: Missing description`, {
         agentId: this.agentId,
         taskId: task.id
       });
       return { valid: false, reason: 'Task missing description' };
     }
 
-    console.log(`[${this.agentType}] Task validation passed:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Task validation passed:`, {
       agentId: this.agentId,
       taskId: task.id
     });
@@ -880,7 +882,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<any>}
    */
   async retryWithBackoff(operation, attempt = 1) {
-    console.log(`[${this.agentType}] Retry attempt ${attempt}/${this.config.retryAttempts}:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Retry attempt ${attempt}/${this.config.retryAttempts}:`, {
       agentId: this.agentId,
       attempt,
       maxAttempts: this.config.retryAttempts
@@ -892,7 +894,7 @@ class BaseAgent extends EventEmitter {
       const result = await operation();
       const duration = Date.now() - attemptStartTime;
 
-      console.log(`[${this.agentType}] Operation succeeded on attempt ${attempt}:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Operation succeeded on attempt ${attempt}:`, {
         agentId: this.agentId,
         attempt,
         duration
@@ -902,7 +904,7 @@ class BaseAgent extends EventEmitter {
     } catch (error) {
       const duration = Date.now() - attemptStartTime;
 
-      console.error(`[${this.agentType}] Operation failed (attempt ${attempt}/${this.config.retryAttempts}):`, {
+      this.logger.agent(this.agentId, "error", `[${this.agentType}] Operation failed (attempt ${attempt}/${this.config.retryAttempts}):`, {
         agentId: this.agentId,
         attempt,
         maxAttempts: this.config.retryAttempts,
@@ -912,7 +914,7 @@ class BaseAgent extends EventEmitter {
       });
 
       if (attempt >= this.config.retryAttempts) {
-        console.error(`[${this.agentType}] Max retries reached, failing operation:`, {
+        this.logger.agent(this.agentId, "error", `[${this.agentType}] Max retries reached, failing operation:`, {
           agentId: this.agentId,
           totalAttempts: attempt,
           finalError: error.message
@@ -921,7 +923,7 @@ class BaseAgent extends EventEmitter {
       }
 
       const delay = this.config.retryDelay * Math.pow(2, attempt - 1);
-      console.log(`[${this.agentType}] Retrying with backoff:`, {
+      this.logger.agent(this.agentId, "debug", `[${this.agentType}] Retrying with backoff:`, {
         agentId: this.agentId,
         delay,
         delaySeconds: (delay / 1000).toFixed(2),
@@ -939,7 +941,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Promise<void>}
    */
   async shutdown() {
-    console.log(`[${this.agentType}] Shutting down agent:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Shutting down agent:`, {
       agentId: this.agentId,
       currentStatus: this.state.status,
       hasCurrentTask: !!this.state.currentTask,
@@ -951,7 +953,7 @@ class BaseAgent extends EventEmitter {
     const totalCost = this.state.conversationHistory
       .reduce((sum, entry) => sum + (entry.cost || 0), 0);
 
-    console.log(`[${this.agentType}] Agent statistics:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Agent statistics:`, {
       agentId: this.agentId,
       totalTasks: this.state.completedTasks.length + this.state.failedTasks.length,
       successRate: this.state.completedTasks.length > 0
@@ -963,7 +965,7 @@ class BaseAgent extends EventEmitter {
 
     this._stopHeartbeat();
 
-    console.log(`[${this.agentType}] Heartbeat stopped:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Heartbeat stopped:`, {
       agentId: this.agentId
     });
 
@@ -974,7 +976,7 @@ class BaseAgent extends EventEmitter {
       timestamp: Date.now()
     });
 
-    console.log(`[${this.agentType}] Agent shutdown complete:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Agent shutdown complete:`, {
       agentId: this.agentId,
       timestamp: new Date().toISOString()
     });
@@ -985,7 +987,7 @@ class BaseAgent extends EventEmitter {
    * @returns {Object}
    */
   serialize() {
-    console.log(`[${this.agentType}] Serializing agent state:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Serializing agent state:`, {
       agentId: this.agentId,
       status: this.state.status,
       hasCurrentTask: !!this.state.currentTask,
@@ -1007,7 +1009,7 @@ class BaseAgent extends EventEmitter {
 
     const serializedSize = JSON.stringify(serialized).length;
 
-    console.log(`[${this.agentType}] State serialization complete:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] State serialization complete:`, {
       agentId: this.agentId,
       serializedSize,
       timestamp: new Date().toISOString()
@@ -1021,7 +1023,7 @@ class BaseAgent extends EventEmitter {
    * @param {Object} state - Serialized state
    */
   restore(state) {
-    console.log(`[${this.agentType}] Restoring agent state:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Restoring agent state:`, {
       agentId: this.agentId,
       restoredStatus: state.status,
       hasCurrentTask: !!state.currentTask,
@@ -1042,7 +1044,7 @@ class BaseAgent extends EventEmitter {
       timestamp: Date.now()
     });
 
-    console.log(`[${this.agentType}] Agent state restored:`, {
+    this.logger.agent(this.agentId, "debug", `[${this.agentType}] Agent state restored:`, {
       agentId: this.agentId,
       currentStatus: this.state.status,
       timestamp: new Date().toISOString()

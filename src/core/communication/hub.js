@@ -7,6 +7,7 @@
 const EventEmitter = require('events');
 const MessageProtocol = require('./protocol');
 const { CommunicationError, TimeoutError } = require('../../utils/errors');
+const { getLogger } = require('../logging/logger');
 
 class CommunicationHub extends EventEmitter {
   constructor(stateManager, lockManager, budgetManager, options = {}) {
@@ -16,6 +17,7 @@ class CommunicationHub extends EventEmitter {
     this.stateManager = stateManager;
     this.lockManager = lockManager;
     this.budgetManager = budgetManager;
+    this.logger = options.logger || getLogger();
 
     this.options = {
       maxConcurrentOperations: options.maxConcurrentOperations || 50,
@@ -54,7 +56,7 @@ class CommunicationHub extends EventEmitter {
    */
   async routeMessage(message) {
     try {
-      console.log(`[CommunicationHub] Message received:`, {
+      this.logger.debug(`[CommunicationHub] Message received:`, {
         messageId: message.id,
         type: message.type,
         agentId: message.agentId,
@@ -65,7 +67,7 @@ class CommunicationHub extends EventEmitter {
 
       // Validate message
       MessageProtocol.validateMessage(message);
-      console.log(`[CommunicationHub] Message validation passed:`, { messageId: message.id });
+      this.logger.debug(`[CommunicationHub] Message validation passed:`, { messageId: message.id });
 
       // NOTE: Budget validation for CLAUDE_REQUEST is handled by ClaudeClient
       // to avoid double validation and ensure proper operation ID tracking.
@@ -75,7 +77,7 @@ class CommunicationHub extends EventEmitter {
       return await this._enqueueMessage(message);
 
     } catch (error) {
-      console.log(`[CommunicationHub] Message routing failed:`, {
+      this.logger.debug(`[CommunicationHub] Message routing failed:`, {
         messageId: message.id,
         type: message.type,
         agentId: message.agentId,
@@ -101,7 +103,7 @@ class CommunicationHub extends EventEmitter {
     const { key, consistency = 'eventual' } = message.payload;
     const startTime = Date.now();
 
-    console.log(`[CommunicationHub] READ operation starting:`, {
+    this.logger.debug(`[CommunicationHub] READ operation starting:`, {
       messageId: message.id,
       agentId: message.agentId,
       key,
@@ -113,7 +115,7 @@ class CommunicationHub extends EventEmitter {
       const value = await this.stateManager.read(key, message.agentId, consistency);
 
       const duration = Date.now() - startTime;
-      console.log(`[CommunicationHub] READ operation completed:`, {
+      this.logger.debug(`[CommunicationHub] READ operation completed:`, {
         messageId: message.id,
         agentId: message.agentId,
         key,
@@ -131,7 +133,7 @@ class CommunicationHub extends EventEmitter {
 
       return { success: true, data: value };
     } catch (error) {
-      console.log(`[CommunicationHub] READ operation failed:`, {
+      this.logger.debug(`[CommunicationHub] READ operation failed:`, {
         messageId: message.id,
         agentId: message.agentId,
         key,
@@ -153,7 +155,7 @@ class CommunicationHub extends EventEmitter {
     const { key, value, lockId, expectedVersion } = message.payload;
     const startTime = Date.now();
 
-    console.log(`[CommunicationHub] WRITE operation starting:`, {
+    this.logger.debug(`[CommunicationHub] WRITE operation starting:`, {
       messageId: message.id,
       agentId: message.agentId,
       key,
@@ -166,21 +168,21 @@ class CommunicationHub extends EventEmitter {
     try {
       // Verify lock if provided
       if (lockId) {
-        console.log(`[CommunicationHub] Verifying lock for WRITE:`, {
+        this.logger.debug(`[CommunicationHub] Verifying lock for WRITE:`, {
           messageId: message.id,
           agentId: message.agentId,
           lockId
         });
         const hasLock = await this.lockManager.verifyLock(lockId, message.agentId);
         if (!hasLock) {
-          console.log(`[CommunicationHub] Lock verification failed for WRITE:`, {
+          this.logger.debug(`[CommunicationHub] Lock verification failed for WRITE:`, {
             messageId: message.id,
             agentId: message.agentId,
             lockId
           });
           throw new Error('Invalid or expired lock for write operation');
         }
-        console.log(`[CommunicationHub] Lock verification passed for WRITE:`, {
+        this.logger.debug(`[CommunicationHub] Lock verification passed for WRITE:`, {
           messageId: message.id,
           agentId: message.agentId,
           lockId
@@ -195,7 +197,7 @@ class CommunicationHub extends EventEmitter {
       );
 
       const duration = Date.now() - startTime;
-      console.log(`[CommunicationHub] WRITE operation completed:`, {
+      this.logger.debug(`[CommunicationHub] WRITE operation completed:`, {
         messageId: message.id,
         agentId: message.agentId,
         key,
@@ -212,7 +214,7 @@ class CommunicationHub extends EventEmitter {
 
       return { success: true, version: result.version };
     } catch (error) {
-      console.log(`[CommunicationHub] WRITE operation failed:`, {
+      this.logger.debug(`[CommunicationHub] WRITE operation failed:`, {
         messageId: message.id,
         agentId: message.agentId,
         key,
@@ -232,7 +234,7 @@ class CommunicationHub extends EventEmitter {
   async _handleLock(message) {
     const { resource, timeout = 30000 } = message.payload;
 
-    console.log(`[CommunicationHub] LOCK operation starting:`, {
+    this.logger.debug(`[CommunicationHub] LOCK operation starting:`, {
       messageId: message.id,
       agentId: message.agentId,
       resource,
@@ -246,7 +248,7 @@ class CommunicationHub extends EventEmitter {
         timeout
       );
 
-      console.log(`[CommunicationHub] LOCK operation succeeded:`, {
+      this.logger.debug(`[CommunicationHub] LOCK operation succeeded:`, {
         messageId: message.id,
         agentId: message.agentId,
         resource,
@@ -255,7 +257,7 @@ class CommunicationHub extends EventEmitter {
 
       return { success: true, lockId };
     } catch (error) {
-      console.log(`[CommunicationHub] LOCK operation failed:`, {
+      this.logger.debug(`[CommunicationHub] LOCK operation failed:`, {
         messageId: message.id,
         agentId: message.agentId,
         resource,
@@ -274,7 +276,7 @@ class CommunicationHub extends EventEmitter {
   async _handleUnlock(message) {
     const { lockId } = message.payload;
 
-    console.log(`[CommunicationHub] UNLOCK operation starting:`, {
+    this.logger.debug(`[CommunicationHub] UNLOCK operation starting:`, {
       messageId: message.id,
       agentId: message.agentId,
       lockId
@@ -283,7 +285,7 @@ class CommunicationHub extends EventEmitter {
     try {
       await this.lockManager.releaseLock(lockId);
 
-      console.log(`[CommunicationHub] UNLOCK operation succeeded:`, {
+      this.logger.debug(`[CommunicationHub] UNLOCK operation succeeded:`, {
         messageId: message.id,
         agentId: message.agentId,
         lockId
@@ -291,7 +293,7 @@ class CommunicationHub extends EventEmitter {
 
       return { success: true };
     } catch (error) {
-      console.log(`[CommunicationHub] UNLOCK operation failed:`, {
+      this.logger.debug(`[CommunicationHub] UNLOCK operation failed:`, {
         messageId: message.id,
         agentId: message.agentId,
         lockId,
@@ -407,7 +409,7 @@ class CommunicationHub extends EventEmitter {
    * @private
    */
   async _handleClaudeRequest(message) {
-    console.log(`[CommunicationHub] CLAUDE_REQUEST operation starting:`, {
+    this.logger.debug(`[CommunicationHub] CLAUDE_REQUEST operation starting:`, {
       messageId: message.id,
       agentId: message.agentId,
       promptSize: JSON.stringify(message.payload?.prompt || '').length,
@@ -423,7 +425,7 @@ class CommunicationHub extends EventEmitter {
       let timeoutId;
 
       const cleanup = () => {
-        console.log(`[CommunicationHub] Cleaning up CLAUDE_REQUEST event listeners:`, {
+        this.logger.debug(`[CommunicationHub] Cleaning up CLAUDE_REQUEST event listeners:`, {
           messageId: message.id,
           agentId: message.agentId,
           responseEvent,
@@ -435,7 +437,7 @@ class CommunicationHub extends EventEmitter {
       };
 
       this.once(responseEvent, (result) => {
-        console.log(`[CommunicationHub] CLAUDE_REQUEST response received:`, {
+        this.logger.debug(`[CommunicationHub] CLAUDE_REQUEST response received:`, {
           messageId: message.id,
           agentId: message.agentId,
           hasResult: !!result,
@@ -446,7 +448,7 @@ class CommunicationHub extends EventEmitter {
       });
 
       this.once(errorEvent, (error) => {
-        console.log(`[CommunicationHub] CLAUDE_REQUEST error received:`, {
+        this.logger.debug(`[CommunicationHub] CLAUDE_REQUEST error received:`, {
           messageId: message.id,
           agentId: message.agentId,
           error: error.message || error
@@ -456,7 +458,7 @@ class CommunicationHub extends EventEmitter {
       });
 
       // Emit the request event
-      console.log(`[CommunicationHub] Emitting CLAUDE_REQUEST event:`, {
+      this.logger.debug(`[CommunicationHub] Emitting CLAUDE_REQUEST event:`, {
         messageId: message.id,
         agentId: message.agentId,
         responseEvent,
@@ -467,7 +469,7 @@ class CommunicationHub extends EventEmitter {
 
       // Timeout after 10 minutes for complex responses
       timeoutId = setTimeout(() => {
-        console.log(`[CommunicationHub] CLAUDE_REQUEST timed out:`, {
+        this.logger.debug(`[CommunicationHub] CLAUDE_REQUEST timed out:`, {
           messageId: message.id,
           agentId: message.agentId,
           timeoutMs: 600000
@@ -518,7 +520,7 @@ class CommunicationHub extends EventEmitter {
    * @private
    */
   async _handleFileRead(message) {
-    console.log(`[CommunicationHub] FILE_READ operation starting:`, {
+    this.logger.debug(`[CommunicationHub] FILE_READ operation starting:`, {
       messageId: message.id,
       agentId: message.agentId,
       path: message.payload?.path
@@ -530,7 +532,7 @@ class CommunicationHub extends EventEmitter {
       let timeoutId;
 
       const cleanup = () => {
-        console.log(`[CommunicationHub] Cleaning up FILE_READ event listeners:`, {
+        this.logger.debug(`[CommunicationHub] Cleaning up FILE_READ event listeners:`, {
           messageId: message.id,
           agentId: message.agentId,
           responseEvent,
@@ -542,7 +544,7 @@ class CommunicationHub extends EventEmitter {
       };
 
       this.once(responseEvent, (result) => {
-        console.log(`[CommunicationHub] FILE_READ response received:`, {
+        this.logger.debug(`[CommunicationHub] FILE_READ response received:`, {
           messageId: message.id,
           agentId: message.agentId,
           hasResult: !!result,
@@ -553,7 +555,7 @@ class CommunicationHub extends EventEmitter {
       });
 
       this.once(errorEvent, (error) => {
-        console.log(`[CommunicationHub] FILE_READ error received:`, {
+        this.logger.debug(`[CommunicationHub] FILE_READ error received:`, {
           messageId: message.id,
           agentId: message.agentId,
           error: error.message || error
@@ -563,7 +565,7 @@ class CommunicationHub extends EventEmitter {
       });
 
       // Emit the request event
-      console.log(`[CommunicationHub] Emitting FILE_READ event:`, {
+      this.logger.debug(`[CommunicationHub] Emitting FILE_READ event:`, {
         messageId: message.id,
         agentId: message.agentId,
         path: message.payload?.path,
@@ -575,7 +577,7 @@ class CommunicationHub extends EventEmitter {
 
       // Timeout after 30 seconds
       timeoutId = setTimeout(() => {
-        console.log(`[CommunicationHub] FILE_READ timed out:`, {
+        this.logger.debug(`[CommunicationHub] FILE_READ timed out:`, {
           messageId: message.id,
           agentId: message.agentId,
           timeoutMs: 30000
@@ -591,7 +593,7 @@ class CommunicationHub extends EventEmitter {
    * @private
    */
   async _handleFileWrite(message) {
-    console.log(`[CommunicationHub] FILE_WRITE operation starting:`, {
+    this.logger.debug(`[CommunicationHub] FILE_WRITE operation starting:`, {
       messageId: message.id,
       agentId: message.agentId,
       path: message.payload?.path,
@@ -604,7 +606,7 @@ class CommunicationHub extends EventEmitter {
       let timeoutId;
 
       const cleanup = () => {
-        console.log(`[CommunicationHub] Cleaning up FILE_WRITE event listeners:`, {
+        this.logger.debug(`[CommunicationHub] Cleaning up FILE_WRITE event listeners:`, {
           messageId: message.id,
           agentId: message.agentId,
           responseEvent,
@@ -616,7 +618,7 @@ class CommunicationHub extends EventEmitter {
       };
 
       this.once(responseEvent, (result) => {
-        console.log(`[CommunicationHub] FILE_WRITE response received:`, {
+        this.logger.debug(`[CommunicationHub] FILE_WRITE response received:`, {
           messageId: message.id,
           agentId: message.agentId,
           hasResult: !!result
@@ -626,7 +628,7 @@ class CommunicationHub extends EventEmitter {
       });
 
       this.once(errorEvent, (error) => {
-        console.log(`[CommunicationHub] FILE_WRITE error received:`, {
+        this.logger.debug(`[CommunicationHub] FILE_WRITE error received:`, {
           messageId: message.id,
           agentId: message.agentId,
           error: error.message || error
@@ -636,7 +638,7 @@ class CommunicationHub extends EventEmitter {
       });
 
       // Emit the request event
-      console.log(`[CommunicationHub] Emitting FILE_WRITE event:`, {
+      this.logger.debug(`[CommunicationHub] Emitting FILE_WRITE event:`, {
         messageId: message.id,
         agentId: message.agentId,
         path: message.payload?.path,
@@ -648,7 +650,7 @@ class CommunicationHub extends EventEmitter {
 
       // Timeout after 30 seconds
       timeoutId = setTimeout(() => {
-        console.log(`[CommunicationHub] FILE_WRITE timed out:`, {
+        this.logger.debug(`[CommunicationHub] FILE_WRITE timed out:`, {
           messageId: message.id,
           agentId: message.agentId,
           timeoutMs: 30000
@@ -774,7 +776,7 @@ class CommunicationHub extends EventEmitter {
       return;
     }
 
-    console.log(`[CommunicationHub] Processing message queue:`, {
+    this.logger.debug(`[CommunicationHub] Processing message queue:`, {
       queueLength: this.messageQueue.length,
       activeOperations: this.activeOperations.size,
       maxConcurrentOperations: this.options.maxConcurrentOperations,
@@ -794,7 +796,7 @@ class CommunicationHub extends EventEmitter {
         return a.timestamp - b.timestamp;
       });
 
-      console.log(`[CommunicationHub] Queue sorted by priority:`, {
+      this.logger.debug(`[CommunicationHub] Queue sorted by priority:`, {
         queueLength: this.messageQueue.length,
         topMessages: this.messageQueue.slice(0, 3).map(m => ({
           id: m.id,
@@ -811,7 +813,7 @@ class CommunicationHub extends EventEmitter {
         break;
       }
 
-      console.log(`[CommunicationHub] Dequeued message for processing:`, {
+      this.logger.debug(`[CommunicationHub] Dequeued message for processing:`, {
         messageId: message.id,
         type: message.type,
         agentId: message.agentId,
@@ -821,7 +823,7 @@ class CommunicationHub extends EventEmitter {
 
       // C3: Check timeout - ensure not already handled
       if (Date.now() > message.timeout) {
-        console.log(`[CommunicationHub] Message timeout detected in queue:`, {
+        this.logger.debug(`[CommunicationHub] Message timeout detected in queue:`, {
           messageId: message.id,
           type: message.type,
           agentId: message.agentId,
@@ -834,7 +836,7 @@ class CommunicationHub extends EventEmitter {
           pending.handled = true; // Mark as handled to prevent double timeout
           pending.reject(new TimeoutError(`Message ${message.id} timed out`));
           this.pendingResponses.delete(message.id);
-          console.log(`[CommunicationHub] Message timeout handled and rejected:`, {
+          this.logger.debug(`[CommunicationHub] Message timeout handled and rejected:`, {
             messageId: message.id
           });
         }
@@ -851,7 +853,7 @@ class CommunicationHub extends EventEmitter {
 
     // Continue processing if queue has more messages
     if (this.messageQueue.length > 0) {
-      console.log(`[CommunicationHub] Queue has more messages, scheduling next processing:`, {
+      this.logger.debug(`[CommunicationHub] Queue has more messages, scheduling next processing:`, {
         remainingMessages: this.messageQueue.length
       });
       setImmediate(() => this._processMessageQueue());
@@ -868,7 +870,7 @@ class CommunicationHub extends EventEmitter {
 
     const startTime = Date.now();
 
-    console.log(`[CommunicationHub] Processing message started:`, {
+    this.logger.debug(`[CommunicationHub] Processing message started:`, {
       messageId: message.id,
       type: message.type,
       agentId: message.agentId,
@@ -879,7 +881,7 @@ class CommunicationHub extends EventEmitter {
     try {
       let result;
 
-      console.log(`[CommunicationHub] Selecting handler for message type:`, {
+      this.logger.debug(`[CommunicationHub] Selecting handler for message type:`, {
         messageId: message.id,
         type: message.type,
         agentId: message.agentId
@@ -973,7 +975,7 @@ class CommunicationHub extends EventEmitter {
       this.stats.averageProcessingTime =
         this.stats.totalProcessingTime / this.stats.messagesProcessed;
 
-      console.log(`[CommunicationHub] Message processing completed successfully:`, {
+      this.logger.debug(`[CommunicationHub] Message processing completed successfully:`, {
         messageId: message.id,
         type: message.type,
         agentId: message.agentId,
@@ -991,7 +993,7 @@ class CommunicationHub extends EventEmitter {
       // Resolve pending promise
       const pending = this.pendingResponses.get(message.id);
       if (pending && !pending.handled) {
-        console.log(`[CommunicationHub] Resolving pending response:`, {
+        this.logger.debug(`[CommunicationHub] Resolving pending response:`, {
           messageId: message.id,
           type: message.type,
           agentId: message.agentId
@@ -1000,7 +1002,7 @@ class CommunicationHub extends EventEmitter {
         pending.resolve(result);
         this.pendingResponses.delete(message.id);
       } else {
-        console.log(`[CommunicationHub] No pending response to resolve:`, {
+        this.logger.debug(`[CommunicationHub] No pending response to resolve:`, {
           messageId: message.id,
           type: message.type,
           agentId: message.agentId,
@@ -1012,7 +1014,7 @@ class CommunicationHub extends EventEmitter {
     } catch (error) {
       this.stats.messagesFailed++;
 
-      console.log(`[CommunicationHub] Message processing failed:`, {
+      this.logger.debug(`[CommunicationHub] Message processing failed:`, {
         messageId: message.id,
         type: message.type,
         agentId: message.agentId,
@@ -1032,7 +1034,7 @@ class CommunicationHub extends EventEmitter {
       if (MessageProtocol.canRetry(message, this.options.retryAttempts)) {
         const retryMessage = MessageProtocol.createRetryMessage(message);
 
-        console.log(`[CommunicationHub] Retrying message:`, {
+        this.logger.debug(`[CommunicationHub] Retrying message:`, {
           originalMessageId: message.id,
           retryMessageId: retryMessage.id,
           retryCount: retryMessage.retryCount,
@@ -1044,7 +1046,7 @@ class CommunicationHub extends EventEmitter {
         if (oldPending && !oldPending.handled) {
           this.pendingResponses.set(retryMessage.id, oldPending);
           this.pendingResponses.delete(message.id); // Cleanup old message ID
-          console.log(`[CommunicationHub] Transferred pending response to retry message:`, {
+          this.logger.debug(`[CommunicationHub] Transferred pending response to retry message:`, {
             oldMessageId: message.id,
             newMessageId: retryMessage.id
           });
@@ -1052,7 +1054,7 @@ class CommunicationHub extends EventEmitter {
 
         this.messageQueue.unshift(retryMessage);
       } else {
-        console.log(`[CommunicationHub] Max retries exceeded, rejecting message:`, {
+        this.logger.debug(`[CommunicationHub] Max retries exceeded, rejecting message:`, {
           messageId: message.id,
           type: message.type,
           agentId: message.agentId,
@@ -1069,7 +1071,7 @@ class CommunicationHub extends EventEmitter {
       }
     } finally {
       this.activeOperations.delete(operationKey);
-      console.log(`[CommunicationHub] Message processing finished, operation removed:`, {
+      this.logger.debug(`[CommunicationHub] Message processing finished, operation removed:`, {
         messageId: message.id,
         operationKey,
         activeOperationsCount: this.activeOperations.size
@@ -1083,7 +1085,7 @@ class CommunicationHub extends EventEmitter {
    */
   async _enqueueMessage(message) {
     return new Promise((resolve, reject) => {
-      console.log(`[CommunicationHub] Enqueueing message:`, {
+      this.logger.debug(`[CommunicationHub] Enqueueing message:`, {
         messageId: message.id,
         type: message.type,
         agentId: message.agentId,
@@ -1094,7 +1096,7 @@ class CommunicationHub extends EventEmitter {
 
       // C6: Check queue saturation
       if (this.messageQueue.length >= this.options.maxQueueSize) {
-        console.log(`[CommunicationHub] Queue saturation detected, rejecting message:`, {
+        this.logger.debug(`[CommunicationHub] Queue saturation detected, rejecting message:`, {
           messageId: message.id,
           type: message.type,
           agentId: message.agentId,
@@ -1109,7 +1111,7 @@ class CommunicationHub extends EventEmitter {
       }
 
       const timeoutMs = message.timeout - Date.now();
-      console.log(`[CommunicationHub] Setting up timeout for message:`, {
+      this.logger.debug(`[CommunicationHub] Setting up timeout for message:`, {
         messageId: message.id,
         type: message.type,
         agentId: message.agentId,
@@ -1118,7 +1120,7 @@ class CommunicationHub extends EventEmitter {
       });
 
       const timeoutId = setTimeout(() => {
-        console.log(`[CommunicationHub] Message timeout fired in enqueue:`, {
+        this.logger.debug(`[CommunicationHub] Message timeout fired in enqueue:`, {
           messageId: message.id,
           type: message.type,
           agentId: message.agentId
@@ -1127,7 +1129,7 @@ class CommunicationHub extends EventEmitter {
         if (pending && !pending.handled) {
           pending.handled = true; // C3: Mark as handled
           this.pendingResponses.delete(message.id);
-          console.log(`[CommunicationHub] Message timeout rejection executed:`, {
+          this.logger.debug(`[CommunicationHub] Message timeout rejection executed:`, {
             messageId: message.id
           });
           reject(new TimeoutError(`Message ${message.id} timed out in queue`));
@@ -1136,7 +1138,7 @@ class CommunicationHub extends EventEmitter {
 
       this.pendingResponses.set(message.id, {
         resolve: (result) => {
-          console.log(`[CommunicationHub] Pending response resolved:`, {
+          this.logger.debug(`[CommunicationHub] Pending response resolved:`, {
             messageId: message.id,
             type: message.type,
             agentId: message.agentId,
@@ -1146,7 +1148,7 @@ class CommunicationHub extends EventEmitter {
           resolve(result);
         },
         reject: (error) => {
-          console.log(`[CommunicationHub] Pending response rejected:`, {
+          this.logger.debug(`[CommunicationHub] Pending response rejected:`, {
             messageId: message.id,
             type: message.type,
             agentId: message.agentId,
@@ -1159,7 +1161,7 @@ class CommunicationHub extends EventEmitter {
         timeoutId: timeoutId
       });
 
-      console.log(`[CommunicationHub] Pending response registered:`, {
+      this.logger.debug(`[CommunicationHub] Pending response registered:`, {
         messageId: message.id,
         type: message.type,
         agentId: message.agentId,
@@ -1168,7 +1170,7 @@ class CommunicationHub extends EventEmitter {
 
       this.messageQueue.push(message);
 
-      console.log(`[CommunicationHub] Message added to queue:`, {
+      this.logger.debug(`[CommunicationHub] Message added to queue:`, {
         messageId: message.id,
         type: message.type,
         agentId: message.agentId,
@@ -1184,13 +1186,13 @@ class CommunicationHub extends EventEmitter {
    * Start message processor (can be called to restart after shutdown)
    */
   startMessageProcessor() {
-    console.log(`[CommunicationHub] Starting message processor:`, {
+    this.logger.debug(`[CommunicationHub] Starting message processor:`, {
       hasExistingProcessor: !!this.processorInterval
     });
 
     // Stop existing processor if running
     if (this.processorInterval) {
-      console.log(`[CommunicationHub] Stopping existing processor before restart`);
+      this.logger.debug(`[CommunicationHub] Stopping existing processor before restart`);
       clearInterval(this.processorInterval);
     }
 
@@ -1201,14 +1203,14 @@ class CommunicationHub extends EventEmitter {
       }
     }, 100); // Check every 100ms
 
-    console.log(`[CommunicationHub] Message processor started with 100ms interval`);
+    this.logger.debug(`[CommunicationHub] Message processor started with 100ms interval`);
   }
 
   /**
    * Stop message processor
    */
   stopProcessor() {
-    console.log(`[CommunicationHub] Stopping message processor:`, {
+    this.logger.debug(`[CommunicationHub] Stopping message processor:`, {
       hasProcessor: !!this.processorInterval,
       queueLength: this.messageQueue.length,
       activeOperations: this.activeOperations.size
@@ -1217,7 +1219,7 @@ class CommunicationHub extends EventEmitter {
     if (this.processorInterval) {
       clearInterval(this.processorInterval);
       this.processorInterval = null;
-      console.log(`[CommunicationHub] Message processor stopped`);
+      this.logger.debug(`[CommunicationHub] Message processor stopped`);
     }
   }
 
@@ -1240,7 +1242,7 @@ class CommunicationHub extends EventEmitter {
    * @param {string} agentId
    */
   async cleanupAgent(agentId) {
-    console.log(`[CommunicationHub] Agent cleanup starting:`, {
+    this.logger.debug(`[CommunicationHub] Agent cleanup starting:`, {
       agentId,
       subscriptionCount: this.agentSubscriptions.get(agentId)?.size || 0
     });
@@ -1248,26 +1250,26 @@ class CommunicationHub extends EventEmitter {
     // Cleanup all subscriptions for this agent
     const agentSubs = this.agentSubscriptions.get(agentId);
     if (agentSubs) {
-      console.log(`[CommunicationHub] Cleaning up agent subscriptions:`, {
+      this.logger.debug(`[CommunicationHub] Cleaning up agent subscriptions:`, {
         agentId,
         subscriptions: Array.from(agentSubs)
       });
 
       for (const subscriptionId of agentSubs) {
         try {
-          console.log(`[CommunicationHub] Unsubscribing subscription:`, {
+          this.logger.debug(`[CommunicationHub] Unsubscribing subscription:`, {
             agentId,
             subscriptionId
           });
           await this.stateManager.unsubscribe(subscriptionId);
           this.subscriptions.delete(subscriptionId);
-          console.log(`[CommunicationHub] Subscription unsubscribed successfully:`, {
+          this.logger.debug(`[CommunicationHub] Subscription unsubscribed successfully:`, {
             agentId,
             subscriptionId
           });
         } catch (error) {
           // Log but don't fail
-          console.log(`[CommunicationHub] Subscription cleanup error:`, {
+          this.logger.debug(`[CommunicationHub] Subscription cleanup error:`, {
             agentId,
             subscriptionId,
             error: error.message,
@@ -1283,7 +1285,7 @@ class CommunicationHub extends EventEmitter {
       this.agentSubscriptions.delete(agentId);
     }
 
-    console.log(`[CommunicationHub] Agent cleanup completed:`, {
+    this.logger.debug(`[CommunicationHub] Agent cleanup completed:`, {
       agentId
     });
 
@@ -1294,7 +1296,7 @@ class CommunicationHub extends EventEmitter {
    * Graceful shutdown
    */
   async shutdown() {
-    console.log(`[CommunicationHub] Shutdown initiated:`, {
+    this.logger.debug(`[CommunicationHub] Shutdown initiated:`, {
       queuedMessages: this.messageQueue.length,
       activeOperations: this.activeOperations.size,
       pendingResponses: this.pendingResponses.size,
@@ -1304,14 +1306,14 @@ class CommunicationHub extends EventEmitter {
 
     this.emit('shuttingDown');
 
-    console.log(`[CommunicationHub] Stopping message processor`);
+    this.logger.debug(`[CommunicationHub] Stopping message processor`);
     this.stopProcessor();
 
     // Wait for active operations
     const maxWait = 30000;
     const start = Date.now();
 
-    console.log(`[CommunicationHub] Waiting for active operations to complete:`, {
+    this.logger.debug(`[CommunicationHub] Waiting for active operations to complete:`, {
       activeOperations: this.activeOperations.size,
       maxWaitMs: maxWait
     });
@@ -1319,7 +1321,7 @@ class CommunicationHub extends EventEmitter {
     while (this.activeOperations.size > 0 && (Date.now() - start) < maxWait) {
       await new Promise(resolve => setTimeout(resolve, 100));
       if (this.activeOperations.size > 0 && (Date.now() - start) % 5000 < 100) {
-        console.log(`[CommunicationHub] Still waiting for active operations:`, {
+        this.logger.debug(`[CommunicationHub] Still waiting for active operations:`, {
           activeOperations: this.activeOperations.size,
           elapsedMs: Date.now() - start
         });
@@ -1327,16 +1329,16 @@ class CommunicationHub extends EventEmitter {
     }
 
     if (this.activeOperations.size > 0) {
-      console.log(`[CommunicationHub] Shutdown timeout reached with active operations:`, {
+      this.logger.debug(`[CommunicationHub] Shutdown timeout reached with active operations:`, {
         activeOperations: this.activeOperations.size,
         operations: Array.from(this.activeOperations.keys())
       });
     } else {
-      console.log(`[CommunicationHub] All active operations completed`);
+      this.logger.debug(`[CommunicationHub] All active operations completed`);
     }
 
     // C4: Cleanup all agent subscriptions
-    console.log(`[CommunicationHub] Cleaning up all agent subscriptions:`, {
+    this.logger.debug(`[CommunicationHub] Cleaning up all agent subscriptions:`, {
       agentCount: this.agentSubscriptions.size,
       agents: Array.from(this.agentSubscriptions.keys())
     });
@@ -1345,7 +1347,7 @@ class CommunicationHub extends EventEmitter {
       await this.cleanupAgent(agentId);
     }
 
-    console.log(`[CommunicationHub] Shutdown completed:`, {
+    this.logger.debug(`[CommunicationHub] Shutdown completed:`, {
       queuedMessages: this.messageQueue.length,
       activeOperations: this.activeOperations.size,
       pendingResponses: this.pendingResponses.size
