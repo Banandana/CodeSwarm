@@ -205,8 +205,8 @@ class CodeSwarm {
     // Lock manager
     this.components.locks = new DistributedLockManager();
 
-    // File system operations
-    this.components.fileOps = new FileSystemOperations(outputDir);
+    // File system operations (with lock manager integration)
+    this.components.fileOps = new FileSystemOperations(outputDir, this.components.locks);
 
     // Claude API client
     this.components.claude = new ClaudeClient(this.components.budget, {

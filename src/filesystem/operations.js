@@ -8,12 +8,23 @@ const fs = require('fs-extra');
 const path = require('path');
 const { FileSystemError } = require('../utils/errors');
 const Validator = require('../utils/validation');
+const TransactionManager = require('./transaction-manager');
 
 class FileSystemOperations extends EventEmitter {
-  constructor(outputDir) {
+  constructor(outputDir, lockManager = null) {
     super();
     this.outputDir = outputDir;
     this.fileHistory = new Map();
+    this.lockManager = lockManager;
+
+    // Transaction manager for multi-file operations
+    this.transactionManager = new TransactionManager(this);
+
+    // Current transaction context (per-agent)
+    this.activeTransactions = new Map();
+
+    // File history size limit (LRU)
+    this.maxHistorySize = 100;
   }
 
   /**
@@ -96,25 +107,79 @@ class FileSystemOperations extends EventEmitter {
       // Validate file path using validation utility
       const fullPath = Validator.validateFilePath(filePath, this.outputDir);
 
+      // CRITICAL: Verify lock before writing (if lockManager is available)
+      if (this.lockManager && options.action === 'modify') {
+        const { lockId, agentId } = options;
+
+        if (!lockId) {
+          throw new FileSystemError(
+            `Lock required for file write operation on ${filePath}`,
+            { filePath, action: options.action }
+          );
+        }
+
+        // Verify the lock is valid and held by this agent
+        const lockValid = await this.lockManager.verifyLock(lockId, agentId);
+        if (!lockValid) {
+          throw new FileSystemError(
+            `Lock verification failed for ${filePath} - file may be locked by another agent`,
+            { filePath, lockId, agentId }
+          );
+        }
+      }
+
       // Check if file already exists
       const exists = await fs.pathExists(fullPath);
 
       // Ensure directory exists
       await fs.ensureDir(path.dirname(fullPath));
 
-      // Store previous version in history
+      // Store previous version in history (with size limit)
       if (exists) {
         const previousContent = await fs.readFile(fullPath, 'utf-8');
-        this.fileHistory.set(filePath, {
-          content: previousContent,
+
+        // Store in history with LRU eviction
+        this._addToHistory(filePath, previousContent);
+
+        // If transaction is active, store backup
+        const transactionId = options.transactionId;
+        if (transactionId) {
+          await this.transactionManager.storeBackup(transactionId, filePath, previousContent);
+        }
+      }
+
+      // Atomic write using temp file with cleanup
+      const tempPath = `${fullPath}.tmp`;
+
+      try {
+        await fs.writeFile(tempPath, content, 'utf-8');
+        await fs.rename(tempPath, fullPath);
+      } catch (error) {
+        // Clean up temp file on failure
+        try {
+          if (await fs.pathExists(tempPath)) {
+            await fs.unlink(tempPath);
+          }
+        } catch (cleanupError) {
+          // Log but don't throw
+          this.emit('warning', {
+            message: `Failed to cleanup temp file: ${tempPath}`,
+            error: cleanupError.message
+          });
+        }
+        throw error;
+      }
+
+      // Record operation in transaction if active
+      if (options.transactionId) {
+        this.transactionManager.addOperation(options.transactionId, {
+          type: 'write',
+          filePath,
+          action: options.action,
+          taskId: options.taskId,
           timestamp: Date.now()
         });
       }
-
-      // Atomic write using temp file
-      const tempPath = `${fullPath}.tmp`;
-      await fs.writeFile(tempPath, content, 'utf-8');
-      await fs.rename(tempPath, fullPath);
 
       // Emit event for tracking
       const action = exists ? 'modified' : 'created';
@@ -359,6 +424,38 @@ class FileSystemOperations extends EventEmitter {
       files: structure.files,
       directories: Array.from(structure.directories).sort()
     };
+  }
+
+  /**
+   * Add file to history with LRU eviction
+   * @param {string} filePath
+   * @param {string} content
+   * @private
+   */
+  _addToHistory(filePath, content) {
+    // Remove oldest entries if history is full
+    if (this.fileHistory.size >= this.maxHistorySize) {
+      // Find oldest entry
+      let oldestKey = null;
+      let oldestTime = Date.now();
+
+      for (const [key, value] of this.fileHistory.entries()) {
+        if (value.timestamp < oldestTime) {
+          oldestTime = value.timestamp;
+          oldestKey = key;
+        }
+      }
+
+      if (oldestKey) {
+        this.fileHistory.delete(oldestKey);
+      }
+    }
+
+    // Add new entry
+    this.fileHistory.set(filePath, {
+      content,
+      timestamp: Date.now()
+    });
   }
 
   /**

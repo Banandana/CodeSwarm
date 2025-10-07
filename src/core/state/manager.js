@@ -51,14 +51,16 @@ class StateManager extends EventEmitter {
    * Read operation with consistency guarantees
    * @param {string} key
    * @param {string} agentId
+   * @param {string} consistency - 'eventual' or 'strong' (default: 'eventual')
    * @returns {Promise<any>}
    */
-  async read(key, agentId) {
+  async read(key, agentId, consistency = 'eventual') {
     return new Promise((resolve) => {
       this.operationQueue.push({
         type: 'READ',
         key,
         agentId,
+        consistency,
         timestamp: Date.now(),
         resolve,
         reject: () => {} // Reads don't fail
@@ -234,13 +236,20 @@ class StateManager extends EventEmitter {
    * @private
    */
   async _executeOperation(operation) {
-    const { type, key, value, agentId, expectedVersion, resolve, reject } = operation;
+    const { type, key, value, agentId, expectedVersion, consistency, resolve, reject } = operation;
 
     // Update vector clock
     const currentClock = this.vectorClock.get(agentId) || 0;
     this.vectorClock.set(agentId, currentClock + 1);
 
     if (type === 'READ') {
+      // Strong consistency: wait for all pending writes to complete
+      if (consistency === 'strong' && this.operationQueue.some(op => op.type === 'WRITE' && op.key === key)) {
+        // Re-queue this read operation to execute after writes
+        this.operationQueue.push(operation);
+        return;
+      }
+
       const stateEntry = this.state.get(key);
       resolve(stateEntry ? stateEntry.value : null);
       return;

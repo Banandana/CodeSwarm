@@ -176,7 +176,9 @@ class BackendAgent extends BaseAgent {
           if (file.action === 'create' || file.action === 'modify') {
             await this.writeFile(file.path, content, {
               action: file.action,
-              taskId: task.id
+              taskId: task.id,
+              lockId: lockId,
+              agentId: this.agentId
             });
 
             this.emit('fileModified', {

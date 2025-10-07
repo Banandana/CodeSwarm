@@ -41,7 +41,7 @@ class CommunicationHub extends EventEmitter {
     };
 
     // Start message processor
-    this._startMessageProcessor();
+    this.startMessageProcessor();
   }
 
   /**
@@ -748,10 +748,15 @@ class CommunicationHub extends EventEmitter {
   }
 
   /**
-   * Start message processor
-   * @private
+   * Start message processor (can be called to restart after shutdown)
    */
-  _startMessageProcessor() {
+  startMessageProcessor() {
+    // Stop existing processor if running
+    if (this.processorInterval) {
+      clearInterval(this.processorInterval);
+    }
+
+    // Start new processor
     this.processorInterval = setInterval(() => {
       if (this.messageQueue.length > 0) {
         this._processMessageQueue();

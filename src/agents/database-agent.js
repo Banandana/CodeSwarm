@@ -23,7 +23,10 @@ class DatabaseAgent extends BaseAgent {
    * @returns {Promise<Object>}
    */
   async executeTask(task) {
+    console.log(`[DatabaseAgent] executeTask called for task:`, task.id);
+
     // Validate task
+    console.log(`[DatabaseAgent] Validating task...`);
     const validation = this.validateTask(task);
     if (!validation.valid) {
       throw new AgentError(
@@ -33,13 +36,17 @@ class DatabaseAgent extends BaseAgent {
     }
 
     // Prepare context
+    console.log(`[DatabaseAgent] Preparing context...`);
     const context = await this._prepareContext(task);
+    console.log(`[DatabaseAgent] Context prepared`);
 
     // Generate prompt
+    console.log(`[DatabaseAgent] Generating prompt...`);
     const { systemPrompt, userPrompt, temperature, maxTokens } =
       generateDatabasePrompt(task, context);
 
     // Call Claude API
+    console.log(`[DatabaseAgent] Calling Claude API...`);
     const response = await this.retryWithBackoff(async () => {
       return await this.callClaude(
         [{ role: 'user', content: userPrompt }],
@@ -71,7 +78,7 @@ class DatabaseAgent extends BaseAgent {
       files: result.files.map(f => ({
         path: f.path,
         action: f.action,
-        size: f.content.length
+        size: (f.content || f.contentBase64 || '').length
       })),
       migrations: result.migrations || [],
       indexes: result.indexes || [],
@@ -140,9 +147,20 @@ class DatabaseAgent extends BaseAgent {
         }
 
         try {
-          await this.writeFile(file.path, file.content, {
+          // Decode Base64 content if present, otherwise use plain content
+          const content = file.contentBase64
+            ? Buffer.from(file.contentBase64, 'base64').toString('utf-8')
+            : file.content;
+
+          if (!content) {
+            throw new Error(`File ${file.path} has no content or contentBase64 field`);
+          }
+
+          await this.writeFile(file.path, content, {
             action: file.action,
-            taskId: task.id
+            taskId: task.id,
+            lockId: lockId,
+            agentId: this.agentId
           });
 
           this.emit('fileModified', {
