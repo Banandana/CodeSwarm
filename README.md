@@ -1,6 +1,6 @@
 # CodeSwarm - Autonomous Code Generation System
 
-**Status:** ⚠️ Experimental - Under Development
+**Status:** ⚠️ Experimental - Under development by LLM agents simulating the work of a living, breathing, code jockey. 
 
 CodeSwarm is a multi-agent autonomous code generation system that transforms project proposals into code with intelligent task decomposition, budget management, and crash recovery. It is 100% AI slop code almost entirely generated via an LLM. The future is now, bitches. The slop is here.
 
