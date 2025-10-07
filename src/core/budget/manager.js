@@ -85,7 +85,7 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Function>} unlock function
    */
   async _acquireMutex() {
-    console.debug(`[BudgetManager] Mutex acquisition requested, queue length: ${this.mutexQueue.length}`);
+    // console.debug(`[BudgetManager] Mutex acquisition requested, queue length: ${this.mutexQueue.length}`);
 
     // Create a new promise that will be the next mutex
     let unlock;
@@ -98,7 +98,7 @@ class BudgetManager extends EventEmitter {
     this.operationMutex = nextMutex;
 
     await currentMutex;
-    console.debug(`[BudgetManager] Mutex acquired`);
+    // console.debug(`[BudgetManager] Mutex acquired`);
     return unlock;
   }
 
@@ -112,7 +112,7 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async validateOperation(operationId, estimatedCost, agentId, priority = 'MEDIUM') {
-    console.log(`[BudgetManager] validateOperation called:`, {
+    // console.log(`[BudgetManager] validateOperation called:`, {
       operationId,
       estimatedCost,
       agentId,
@@ -124,12 +124,12 @@ class BudgetManager extends EventEmitter {
 
     // FIX B1: Acquire mutex for atomic validate-and-reserve operation
     const unlock = await this._acquireMutex();
-    console.debug(`[BudgetManager] Mutex acquired for validateOperation: ${operationId}`);
+    // console.debug(`[BudgetManager] Mutex acquired for validateOperation: ${operationId}`);
 
     try {
       // Circuit breaker check
       const canExecute = this.circuitBreaker.canExecute();
-      console.debug(`[BudgetManager] Circuit breaker check: ${canExecute}`);
+      // console.debug(`[BudgetManager] Circuit breaker check: ${canExecute}`);
 
       if (!canExecute) {
         const state = this.circuitBreaker.getState();
@@ -147,7 +147,7 @@ class BudgetManager extends EventEmitter {
 
       // Calculate projected usage (atomic read within mutex)
       const totalProjected = this.usage.total + this.usage.reserved + estimatedCost;
-      console.debug(`[BudgetManager] Budget calculation:`, {
+      // console.debug(`[BudgetManager] Budget calculation:`, {
         operationId,
         currentTotal: this.usage.total,
         currentReserved: this.usage.reserved,
@@ -188,7 +188,7 @@ class BudgetManager extends EventEmitter {
 
       // Reserve check
       const reserveRemaining = this.config.maxBudget - totalProjected;
-      console.debug(`[BudgetManager] Reserve check:`, {
+      // console.debug(`[BudgetManager] Reserve check:`, {
         operationId,
         reserveRemaining,
         minReserve: this.config.minReserve,
@@ -225,7 +225,7 @@ class BudgetManager extends EventEmitter {
         status: 'reserved'
       });
 
-      console.log(`[BudgetManager] Budget reserved successfully:`, {
+      // console.log(`[BudgetManager] Budget reserved successfully:`, {
         operationId,
         estimatedCost,
         newReserved: this.usage.reserved,
@@ -255,7 +255,7 @@ class BudgetManager extends EventEmitter {
       // FIX B4: Removed recordSuccess() from here
       // Circuit breaker success should only be recorded after operation completes (in recordUsage)
 
-      console.log(`[BudgetManager] validateOperation completed successfully:`, {
+      // console.log(`[BudgetManager] validateOperation completed successfully:`, {
         operationId,
         approved: true,
         remaining: this.config.maxBudget - totalProjected,
@@ -289,7 +289,7 @@ class BudgetManager extends EventEmitter {
       );
     } finally {
       // FIX B1: Always release mutex, even on error
-      console.debug(`[BudgetManager] Mutex released for validateOperation: ${operationId}`);
+      // console.debug(`[BudgetManager] Mutex released for validateOperation: ${operationId}`);
       unlock();
     }
   }
@@ -301,7 +301,7 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async releaseReservation(operationId) {
-    console.log(`[BudgetManager] releaseReservation called:`, {
+    // console.log(`[BudgetManager] releaseReservation called:`, {
       operationId,
       currentReserved: this.usage.reserved,
       operationExists: this.usage.operations.has(operationId)
@@ -331,7 +331,7 @@ class BudgetManager extends EventEmitter {
     this.usage.reserved -= operation.estimatedCost;
     this.usage.operations.delete(operationId);
 
-    console.log(`[BudgetManager] Reservation released:`, {
+    // console.log(`[BudgetManager] Reservation released:`, {
       operationId,
       releasedAmount: operation.estimatedCost,
       previousReserved,
@@ -362,7 +362,7 @@ class BudgetManager extends EventEmitter {
    * @returns {Promise<Object>}
    */
   async recordUsage(operationId, actualCost) {
-    console.log(`[BudgetManager] recordUsage called:`, {
+    // console.log(`[BudgetManager] recordUsage called:`, {
       operationId,
       actualCost,
       currentTotal: this.usage.total,
@@ -403,7 +403,7 @@ class BudgetManager extends EventEmitter {
     operation.variance = actualCost - operation.estimatedCost;
     operation.variancePercent = (operation.variance / operation.estimatedCost) * 100;
 
-    console.log(`[BudgetManager] Budget totals updated:`, {
+    // console.log(`[BudgetManager] Budget totals updated:`, {
       operationId,
       previousTotal,
       newTotal: this.usage.total,
@@ -421,7 +421,7 @@ class BudgetManager extends EventEmitter {
       duration: operation.completedAt - operation.timestamp
     });
 
-    console.debug(`[BudgetManager] Operation added to history:`, {
+    // console.debug(`[BudgetManager] Operation added to history:`, {
       operationId,
       historyLength: this.usage.history.length,
       duration: operation.completedAt - operation.timestamp
@@ -439,7 +439,7 @@ class BudgetManager extends EventEmitter {
 
     // FIX B4: Record circuit breaker success AFTER operation completes
     // This ensures we only count successful operations, not just successful validations
-    console.debug(`[BudgetManager] Recording circuit breaker success for operation: ${operationId}`);
+    // console.debug(`[BudgetManager] Recording circuit breaker success for operation: ${operationId}`);
     this.circuitBreaker.recordSuccess();
 
     return {
@@ -595,38 +595,31 @@ class BudgetManager extends EventEmitter {
     const now = Date.now();
     const expired = [];
 
-    console.debug(`[BudgetManager] Cleanup cycle starting:`, {
-      timestamp: new Date(now).toISOString(),
-      totalOperations: this.usage.operations.size,
-      stepTimeout: this.config.stepTimeout,
-      currentReserved: this.usage.reserved
-    });
-
     for (const [operationId, operation] of this.usage.operations.entries()) {
       const age = now - operation.timestamp;
-      const isExpired = operation.status === 'reserved' && age > this.config.stepTimeout;
 
-      console.debug(`[BudgetManager] Checking operation:`, {
-        operationId,
-        status: operation.status,
-        age,
-        timeout: this.config.stepTimeout,
-        isExpired
-      });
+      // FIX: Only clean up COMPLETED operations past timeout
+      // Reserved operations are still active - let them finish!
+      const isExpiredCompleted = operation.status === 'completed' && age > this.config.stepTimeout;
 
-      if (isExpired) {
-        // Release reservation
+      // Only clean up reserved operations if VERY old (10+ minutes = likely stuck)
+      const isStuckReserved = operation.status === 'reserved' && age > 600000; // 10 minutes
+
+      if (isExpiredCompleted) {
+        // Clean up old completed operation from tracking
+        this.usage.operations.delete(operationId);
+        expired.push(operationId);
+      } else if (isStuckReserved) {
+        // Release stuck reservation (likely a bug or timeout issue)
         this.usage.reserved -= operation.estimatedCost;
         this.usage.operations.delete(operationId);
         expired.push(operationId);
 
-        console.warn(`[BudgetManager] Operation expired and released:`, {
+        console.warn(`[BudgetManager] Stuck operation cleaned up after 10+ minutes:`, {
           operationId,
           estimatedCost: operation.estimatedCost,
           agentId: operation.agentId,
-          age,
-          newReserved: this.usage.reserved,
-          operationsMapSize: this.usage.operations.size
+          age: Math.floor(age / 1000) + 's'
         });
 
         this.emit('operationExpired', {
@@ -637,13 +630,6 @@ class BudgetManager extends EventEmitter {
         });
       }
     }
-
-    console.log(`[BudgetManager] Cleanup cycle complete:`, {
-      expiredCount: expired.length,
-      expiredOperations: expired,
-      remainingOperations: this.usage.operations.size,
-      currentReserved: this.usage.reserved
-    });
 
     return expired;
   }
