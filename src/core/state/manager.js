@@ -6,17 +6,29 @@
 const EventEmitter = require('events');
 const CheckpointManager = require('./checkpoint');
 const { StateError, ConcurrencyError } = require('../../utils/errors');
+const fs = require('fs-extra');
+const path = require('path');
 
 class StateManager extends EventEmitter {
   constructor(outputDir) {
     super();
 
+    this.outputDir = outputDir;
     this.state = new Map();
     this.subscribers = new Map();
     this.operationQueue = [];
     this.isProcessing = false;
     this.vectorClock = new Map();
     this.checkpointManager = new CheckpointManager(outputDir);
+
+    // Archival configuration
+    this.archivalConfig = {
+      enabled: process.env.STATE_ARCHIVAL_ENABLED !== 'false', // Default enabled
+      archiveThreshold: parseInt(process.env.STATE_ARCHIVE_THRESHOLD) || 86400000, // 24 hours
+      archiveDir: path.join(outputDir, '.codeswarm', 'state-archive'),
+      pruneThreshold: parseInt(process.env.STATE_PRUNE_THRESHOLD) || 172800000, // 48 hours
+      archiveInterval: parseInt(process.env.STATE_ARCHIVE_INTERVAL) || 3600000 // 1 hour
+    };
 
     // System state
     this.systemState = {
@@ -32,6 +44,18 @@ class StateManager extends EventEmitter {
       projectInfo: {},
       config: {}
     };
+
+    // Archival metrics
+    this.archivalMetrics = {
+      archived: 0,
+      pruned: 0,
+      memoryReclaimed: 0
+    };
+
+    // Start archival interval if enabled
+    if (this.archivalConfig.enabled) {
+      this._startArchivalInterval();
+    }
   }
 
   /**
@@ -390,10 +414,179 @@ class StateManager extends EventEmitter {
   }
 
   /**
+   * Start archival interval
+   * @private
+   */
+  _startArchivalInterval() {
+    if (this.archivalInterval) return;
+
+    console.log('[StateManager] Starting state archival system');
+
+    this.archivalInterval = setInterval(async () => {
+      try {
+        await this.archiveOldState();
+      } catch (error) {
+        console.error('[StateManager] Archival error:', error.message);
+      }
+    }, this.archivalConfig.archiveInterval);
+  }
+
+  /**
+   * Archive old state entries to disk
+   * @returns {Promise<Object>} Archival statistics
+   */
+  async archiveOldState() {
+    if (!this.archivalConfig.enabled) {
+      return { archived: 0, pruned: 0 };
+    }
+
+    const now = Date.now();
+    const toArchive = [];
+    const toPrune = [];
+
+    // Identify entries to archive or prune
+    for (const [key, entry] of this.state.entries()) {
+      const age = now - (entry.lastModified || entry.timestamp || 0);
+
+      if (age > this.archivalConfig.pruneThreshold) {
+        // Very old entries - prune entirely
+        toPrune.push(key);
+      } else if (age > this.archivalConfig.archiveThreshold) {
+        // Old entries - archive to disk
+        toArchive.push({ key, entry });
+      }
+    }
+
+    // Archive entries
+    if (toArchive.length > 0) {
+      await this._archiveToDisk(toArchive);
+
+      // Remove from memory after archiving
+      for (const { key } of toArchive) {
+        const entry = this.state.get(key);
+        if (entry) {
+          const size = JSON.stringify(entry).length;
+          this.archivalMetrics.memoryReclaimed += size;
+        }
+        this.state.delete(key);
+      }
+
+      this.archivalMetrics.archived += toArchive.length;
+    }
+
+    // Prune very old entries
+    if (toPrune.length > 0) {
+      for (const key of toPrune) {
+        this.state.delete(key);
+      }
+      this.archivalMetrics.pruned += toPrune.length;
+    }
+
+    if (toArchive.length > 0 || toPrune.length > 0) {
+      console.log(`[StateManager] Archived ${toArchive.length} entries, pruned ${toPrune.length} entries`);
+      console.log(`[StateManager] Memory reclaimed: ${Math.round(this.archivalMetrics.memoryReclaimed / 1024)}KB`);
+
+      this.emit('stateArchived', {
+        archived: toArchive.length,
+        pruned: toPrune.length,
+        remainingEntries: this.state.size,
+        timestamp: Date.now()
+      });
+    }
+
+    return {
+      archived: toArchive.length,
+      pruned: toPrune.length,
+      remainingEntries: this.state.size
+    };
+  }
+
+  /**
+   * Archive entries to disk
+   * @private
+   */
+  async _archiveToDisk(entries) {
+    await fs.ensureDir(this.archivalConfig.archiveDir);
+
+    const archiveFile = path.join(
+      this.archivalConfig.archiveDir,
+      `archive-${Date.now()}.json`
+    );
+
+    const archiveData = {
+      timestamp: Date.now(),
+      entries: entries.map(({ key, entry }) => ({
+        key,
+        value: entry.value,
+        version: entry.version,
+        lastModified: entry.lastModified,
+        lastModifiedBy: entry.lastModifiedBy
+      }))
+    };
+
+    await fs.writeJson(archiveFile, archiveData, { spaces: 2 });
+  }
+
+  /**
+   * Restore archived state if needed
+   * @param {string} key - State key to restore
+   * @returns {Promise<any>} Restored value or null
+   */
+  async restoreFromArchive(key) {
+    const archiveDir = this.archivalConfig.archiveDir;
+
+    if (!await fs.pathExists(archiveDir)) {
+      return null;
+    }
+
+    const archiveFiles = (await fs.readdir(archiveDir))
+      .filter(f => f.startsWith('archive-') && f.endsWith('.json'))
+      .sort()
+      .reverse(); // Most recent first
+
+    for (const file of archiveFiles) {
+      const archivePath = path.join(archiveDir, file);
+      const archive = await fs.readJson(archivePath);
+
+      const entry = archive.entries.find(e => e.key === key);
+      if (entry) {
+        console.log(`[StateManager] Restored ${key} from archive: ${file}`);
+        return entry.value;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Get archival statistics
+   * @returns {Object}
+   */
+  getArchivalStats() {
+    return {
+      ...this.archivalMetrics,
+      currentStateSize: this.state.size,
+      memoryReclaimedMB: Math.round(this.archivalMetrics.memoryReclaimed / (1024 * 1024) * 100) / 100,
+      archivalEnabled: this.archivalConfig.enabled
+    };
+  }
+
+  /**
    * Cleanup resources and prepare for shutdown
    */
   async cleanup() {
     console.log('[StateManager] Cleaning up resources...');
+
+    // Stop archival interval
+    if (this.archivalInterval) {
+      clearInterval(this.archivalInterval);
+      this.archivalInterval = null;
+    }
+
+    // Final archival before shutdown
+    if (this.archivalConfig.enabled) {
+      await this.archiveOldState();
+    }
 
     // Process remaining operations with timeout
     const startTime = Date.now();

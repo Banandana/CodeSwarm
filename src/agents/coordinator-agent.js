@@ -6,10 +6,18 @@
 const BaseAgent = require('./base-agent');
 const { generateCoordinatorPrompt } = require('./prompts/coordinator-agent');
 const { AgentError } = require('../utils/errors');
+const AgentPool = require('../core/agent-pool');
 
 class CoordinatorAgent extends BaseAgent {
   constructor(agentId, communicationHub, options = {}) {
     super(agentId, 'coordinator', communicationHub, options);
+
+    // Initialize agent pool for worker reuse
+    this.agentPool = new AgentPool({
+      maxPerType: options.maxAgentsPerType || 3,
+      idleTimeout: options.agentIdleTimeout || 300000, // 5 minutes
+      enableMetrics: true
+    });
 
     this.orchestration = {
       projectPlan: null,
@@ -103,12 +111,89 @@ class CoordinatorAgent extends BaseAgent {
   }
 
   /**
+   * Check if we should use the new V2 specification system
+   * @returns {boolean}
+   */
+  shouldUseNewSpecificationSystem() {
+    // Start with explicit control via environment variable
+    if (process.env.USE_NEW_SPEC_SYSTEM === 'true') return true;
+    if (process.env.USE_NEW_SPEC_SYSTEM === 'false') return false;
+
+    // Default to false initially
+    return false;
+  }
+
+  /**
+   * Generate specifications using V2 system with specialists and caching
+   * @param {Object} projectContext - Project context
+   * @returns {Promise<Array>} Array of validated specifications
+   */
+  async generateSpecificationsV2(projectContext = {}) {
+    console.log(`[${this.agentId}] Using NEW specification system for ${this.orchestration.features.length} features`);
+
+    const SpecificationSystemV2 = require('./specification-v2');
+    const qualityGate = new (require('../validation/spec-quality-gate'))();
+    const specSystem = new SpecificationSystemV2(this.communicationHub);
+
+    const specifications = [];
+
+    for (const feature of this.orchestration.features) {
+      let spec = null;
+      let attempts = 0;
+      const maxAttempts = 2; // Fewer attempts needed with better system
+
+      while (attempts < maxAttempts) {
+        try {
+          attempts++;
+          spec = await specSystem.generateSpecification(feature, {
+            ...projectContext,
+            existingSpecs: specifications,
+            architecture: this.orchestration.architecture
+          });
+
+          // Use existing quality gate
+          const quality = await qualityGate.validateSpec(spec);
+          console.log(`[${this.agentId}] Spec quality: ${quality.overallScore}/100`);
+
+          if (quality.recommendation === 'accept') {
+            specifications.push(spec);
+            break;
+          } else if (quality.recommendation === 'revise' && attempts < maxAttempts) {
+            spec = await specSystem.refineSpecification(spec, quality);
+          }
+
+        } catch (error) {
+          console.error(`[${this.agentId}] Spec generation failed:`, error.message);
+          if (attempts >= maxAttempts) {
+            console.warn(`[${this.agentId}] Falling back to legacy system for ${feature.name}`);
+            // Fallback to legacy for this feature
+            const SpecificationAgent = require('./specification-agent');
+            const legacyAgent = new SpecificationAgent('spec-fallback', this.communicationHub);
+            await legacyAgent.initialize();
+            spec = await legacyAgent.generateSpecification(feature, projectContext);
+            specifications.push(spec);
+            break;
+          }
+        }
+      }
+    }
+
+    console.log(`[${this.agentId}] Generated ${specifications.length} specifications with new system`);
+    return specifications;
+  }
+
+  /**
    * Generate specifications for all features with quality validation
    * @param {Object} projectContext - Project context
    * @returns {Promise<Array>} Array of validated specifications
    */
   async generateSpecifications(projectContext = {}) {
-    console.log(`[${this.agentId}] Generating specifications for ${this.orchestration.features.length} features`);
+    if (this.shouldUseNewSpecificationSystem()) {
+      return await this.generateSpecificationsV2(projectContext);
+    }
+
+    // ... existing implementation continues unchanged
+    console.log(`[${this.agentId}] Using LEGACY specification system for ${this.orchestration.features.length} features`);
 
     const SpecificationAgent = require('./specification-agent');
     const SpecificationQualityGate = require('../validation/spec-quality-gate');
@@ -630,14 +715,14 @@ class CoordinatorAgent extends BaseAgent {
    * @returns {Promise} Task completion promise
    */
   async _assignTask(task) {
-    try {
-      // Get or create agent for task type
-      let agent = this.orchestration.agents.get(task.agentType);
+    let agent = null;
 
-      if (!agent) {
-        agent = await this._createAgent(task.agentType);
-        this.orchestration.agents.set(task.agentType, agent);
-      }
+    try {
+      // Acquire agent from pool (reuse or create new)
+      agent = await this.agentPool.acquire(
+        task.agentType,
+        () => this._createAgent(task.agentType)
+      );
 
       // Mark task as active
       this.orchestration.activeTasks.set(task.id, {
@@ -649,6 +734,7 @@ class CoordinatorAgent extends BaseAgent {
       this.emit('taskAssigned', {
         taskId: task.id,
         agentType: task.agentType,
+        agentId: agent.agentId,
         timestamp: Date.now()
       });
 
@@ -656,16 +742,24 @@ class CoordinatorAgent extends BaseAgent {
       const taskPromise = agent.handleTaskAssignment(task)
         .then(result => {
           this._handleTaskSuccess(task, result);
+          // Release agent back to pool on success
+          this.agentPool.release(agent);
           return result;
         })
         .catch(error => {
           this._handleTaskFailure(task, error);
+          // Release agent back to pool on error (pool will handle error case)
+          this.agentPool.release(agent, { error: error.message });
           throw error;
         });
 
       return taskPromise;
 
     } catch (error) {
+      // Release agent if acquired
+      if (agent) {
+        this.agentPool.release(agent, { error: error.message });
+      }
       await this._handleTaskFailure(task, error);
       throw error;
     }
